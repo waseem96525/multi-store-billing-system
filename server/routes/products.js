@@ -79,6 +79,12 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     tax_percent,
     stock_qty,
     reorder_level,
+    description,
+    brand,
+    hsn_code,
+    mrp,
+    expiry_date,
+    location,
   } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
 
@@ -87,8 +93,9 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     // NOTE: prepare statements after BEGIN - required for remote (Hrana/Turso) transactions
     const insertProduct = db.prepare(
       `INSERT INTO products
-       (name, sku, barcode, category_id, unit, cost_price, selling_price, tax_percent)
-       VALUES (?,?,?,?,?,?,?,?)`
+       (name, sku, barcode, category_id, unit, cost_price, selling_price, tax_percent,
+        description, brand, hsn_code, mrp, expiry_date, location)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     );
     const insertStock = db.prepare(
       `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
@@ -105,7 +112,13 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
       unit || 'pcs',
       cost_price || 0,
       selling_price || 0,
-      tax_percent || 0
+      tax_percent || 0,
+      description || null,
+      brand || null,
+      hsn_code || null,
+      mrp || 0,
+      expiry_date || null,
+      location || null
     );
     // Give every existing store a row (zero stock), then set the creating store's stock
     db.exec(
@@ -144,6 +157,12 @@ router.put('/:id', authorize('admin', 'inventory'), (req, res) => {
     tax_percent,
     stock_qty,
     reorder_level,
+    description,
+    brand,
+    hsn_code,
+    mrp,
+    expiry_date,
+    location,
   } = req.body || {};
 
   db.exec('BEGIN');
@@ -152,6 +171,7 @@ router.put('/:id', authorize('admin', 'inventory'), (req, res) => {
       `UPDATE products SET
          name=?, sku=?, barcode=?, category_id=?, unit=?,
          cost_price=?, selling_price=?, tax_percent=?,
+         description=?, brand=?, hsn_code=?, mrp=?, expiry_date=?, location=?,
          updated_at=datetime('now')
        WHERE id=?`
     );
@@ -171,6 +191,12 @@ router.put('/:id', authorize('admin', 'inventory'), (req, res) => {
       cost_price ?? existing.cost_price,
       selling_price ?? existing.selling_price,
       tax_percent ?? existing.tax_percent,
+      description ?? existing.description,
+      brand ?? existing.brand,
+      hsn_code ?? existing.hsn_code,
+      mrp ?? existing.mrp,
+      expiry_date ?? existing.expiry_date,
+      location ?? existing.location,
       id
     );
     const curStock = db

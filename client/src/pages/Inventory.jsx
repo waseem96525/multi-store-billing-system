@@ -18,9 +18,15 @@ const EMPTY = {
   unit: 'pcs',
   cost_price: 0,
   selling_price: 0,
+  mrp: 0,
   tax_percent: 0,
   stock_qty: 0,
   reorder_level: 0,
+  description: '',
+  brand: '',
+  hsn_code: '',
+  expiry_date: '',
+  location: '',
 };
 
 export default function Inventory() {
@@ -71,9 +77,15 @@ export default function Inventory() {
       unit: p.unit || 'pcs',
       cost_price: p.cost_price,
       selling_price: p.selling_price,
+      mrp: p.mrp || 0,
       tax_percent: p.tax_percent,
       stock_qty: p.stock_qty,
       reorder_level: p.reorder_level,
+      description: p.description || '',
+      brand: p.brand || '',
+      hsn_code: p.hsn_code || '',
+      expiry_date: p.expiry_date || '',
+      location: p.location || '',
     });
     setShowForm(true);
   };
@@ -87,6 +99,7 @@ export default function Inventory() {
         category_id: form.category_id ? Number(form.category_id) : null,
         cost_price: Number(form.cost_price),
         selling_price: Number(form.selling_price),
+        mrp: Number(form.mrp),
         tax_percent: Number(form.tax_percent),
         stock_qty: Number(form.stock_qty),
         reorder_level: Number(form.reorder_level),
@@ -202,10 +215,12 @@ export default function Inventory() {
           <thead className="bg-slate-50 text-slate-600">
             <tr className="text-left">
               <th className="p-2">Name</th>
+              <th className="p-2">Brand</th>
               <th className="p-2">SKU</th>
               <th className="p-2">Category</th>
               <th className="p-2 text-right">Cost</th>
               <th className="p-2 text-right">Price</th>
+              <th className="p-2 text-right">MRP</th>
               <th className="p-2 text-right">Tax%</th>
               <th className="p-2 text-right">Stock</th>
               <th className="p-2 text-right">Reorder</th>
@@ -216,10 +231,12 @@ export default function Inventory() {
             {products.map((p) => (
               <tr key={p.id} className="border-t">
                 <td className="p-2 font-medium">{p.name}</td>
+                <td className="p-2 text-slate-500">{p.brand || '-'}</td>
                 <td className="p-2 text-slate-500">{p.sku || '-'}</td>
                 <td className="p-2">{p.category_name || '-'}</td>
                 <td className="p-2 text-right">{p.cost_price}</td>
                 <td className="p-2 text-right">{p.selling_price}</td>
+                <td className="p-2 text-right">{p.mrp || '-'}</td>
                 <td className="p-2 text-right">{p.tax_percent}</td>
                 <td className={`p-2 text-right ${p.stock_qty <= p.reorder_level ? 'text-red-600 font-semibold' : ''}`}>
                   {p.stock_qty}
@@ -237,7 +254,7 @@ export default function Inventory() {
             ))}
             {products.length === 0 && (
               <tr>
-                <td colSpan={9} className="p-4 text-center text-slate-400">
+                <td colSpan={11} className="p-4 text-center text-slate-400">
                   No products found
                 </td>
               </tr>
@@ -299,6 +316,26 @@ export default function Inventory() {
                 onChange={(e) => setForm({ ...form, unit: e.target.value })}
               />
             </div>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 border rounded px-2 py-1"
+                placeholder="Brand"
+                value={form.brand}
+                onChange={(e) => setForm({ ...form, brand: e.target.value })}
+              />
+              <input
+                className="flex-1 border rounded px-2 py-1"
+                placeholder="HSN Code"
+                value={form.hsn_code}
+                onChange={(e) => setForm({ ...form, hsn_code: e.target.value })}
+              />
+            </div>
+            <input
+              className="w-full border rounded px-2 py-1"
+              placeholder="Description"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="text-xs text-slate-500">
                 Cost Price
@@ -316,6 +353,33 @@ export default function Inventory() {
                   className="w-full border rounded px-2 py-1"
                   value={form.selling_price}
                   onChange={(e) => setForm({ ...form, selling_price: e.target.value })}
+                />
+              </label>
+              <label className="text-xs text-slate-500">
+                MRP
+                <input
+                  type="number"
+                  className="w-full border rounded px-2 py-1"
+                  value={form.mrp}
+                  onChange={(e) => setForm({ ...form, mrp: e.target.value })}
+                />
+              </label>
+              <label className="text-xs text-slate-500">
+                Expiry Date
+                <input
+                  type="date"
+                  className="w-full border rounded px-2 py-1"
+                  value={form.expiry_date}
+                  onChange={(e) => setForm({ ...form, expiry_date: e.target.value })}
+                />
+              </label>
+              <label className="text-xs text-slate-500">
+                Shelf / Location
+                <input
+                  className="w-full border rounded px-2 py-1"
+                  placeholder="e.g. Aisle 2, Rack 3"
+                  value={form.location}
+                  onChange={(e) => setForm({ ...form, location: e.target.value })}
                 />
               </label>
               <label className="text-xs text-slate-500">

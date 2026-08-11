@@ -207,6 +207,12 @@ ensureColumn('purchases', 'store_id', 'store_id INTEGER NOT NULL DEFAULT 1');
 ensureColumn('held_bills', 'store_id', 'store_id INTEGER NOT NULL DEFAULT 1');
 ensureColumn('stock_adjustments', 'store_id', 'store_id INTEGER NOT NULL DEFAULT 1');
 ensureColumn('invoice_items', 'cost_price', 'cost_price REAL NOT NULL DEFAULT 0');
+ensureColumn('products', 'description', 'description TEXT');
+ensureColumn('products', 'brand', 'brand TEXT');
+ensureColumn('products', 'hsn_code', 'hsn_code TEXT');
+ensureColumn('products', 'mrp', 'mrp REAL NOT NULL DEFAULT 0');
+ensureColumn('products', 'expiry_date', 'expiry_date TEXT');
+ensureColumn('products', 'location', 'location TEXT');
 
 // Seed default store
 const storeCount = db.prepare('SELECT COUNT(*) AS c FROM stores').get().c;
