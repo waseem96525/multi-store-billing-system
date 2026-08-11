@@ -11,3 +11,6 @@ export const deleteProduct = (id) => api.delete(`/products/${id}`).then((r) => r
 export const listCategories = () => api.get('/products/categories/all').then((r) => r.data);
 export const createCategory = (name) =>
   api.post('/products/categories', { name }).then((r) => r.data);
+export const renameCategory = (id, name) =>
+  api.put(`/products/categories/${id}`, { name }).then((r) => r.data);
+export const deleteCategory = (id) => api.delete(`/products/categories/${id}`).then((r) => r.data);

@@ -236,4 +236,34 @@ router.post('/categories', authorize('admin', 'inventory'), (req, res) => {
   }
 });
 
+router.put('/categories/:id', authorize('admin', 'inventory'), (req, res) => {
+  const { name } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const info = db
+    .prepare('UPDATE categories SET name = ? WHERE id = ?')
+    .run(name, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Category not found' });
+  res.json({ category: { id: Number(req.params.id), name } });
+});
+
+router.delete('/categories/:id', authorize('admin', 'inventory'), (req, res) => {
+  try {
+    db.exec('BEGIN');
+    try {
+      db.prepare('UPDATE products SET category_id = NULL WHERE category_id = ?').run(
+        req.params.id
+      );
+      const info = db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
+      db.exec('COMMIT');
+      if (info.changes === 0) return res.status(404).json({ error: 'Category not found' });
+      res.json({ success: true });
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 module.exports = router;
