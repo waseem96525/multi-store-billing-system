@@ -1,0 +1,20 @@
+{
+  "name": "retail-billing-system",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Retail Billing & Inventory Management System (Phase 1)",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "start": "npm --prefix server start",
+    "server": "npm --prefix server start",
+    "client": "npm --prefix client run dev",
+    "dev": "concurrently -n server,client \"npm --prefix server start\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
