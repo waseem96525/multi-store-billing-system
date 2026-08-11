@@ -140,7 +140,7 @@ export default function Inventory() {
         </label>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-auto">
+      <div className="bg-white rounded-lg shadow table-wrap">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr className="text-left">
@@ -193,7 +193,7 @@ export default function Inventory() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <form
             onSubmit={handleSubmit}
-            className="bg-white p-5 rounded-lg w-96 max-h-[90vh] overflow-auto space-y-2"
+            className="bg-white p-5 rounded-lg w-[min(92vw,24rem)] max-h-[90vh] overflow-auto space-y-2"
           >
             <h2 className="font-bold text-lg mb-2">
               {editing ? 'Edit Product' : 'Add Product'}
@@ -242,7 +242,7 @@ export default function Inventory() {
                 onChange={(e) => setForm({ ...form, unit: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="text-xs text-slate-500">
                 Cost Price
                 <input

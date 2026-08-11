@@ -105,9 +105,9 @@ export default function Reports() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-slate-800">Sales Reports</h1>
-        <div className="flex items-center gap-2 bg-white rounded-lg shadow px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 bg-white rounded-lg shadow px-3 py-2">
           <input
             type="date"
             className="border rounded px-2 py-1 text-sm"
@@ -180,7 +180,7 @@ export default function Reports() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg shadow overflow-auto">
+        <div className="bg-white rounded-lg shadow table-wrap">
           <h2 className="font-semibold p-4 pb-2 text-slate-700">Top Products</h2>
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600 text-left">

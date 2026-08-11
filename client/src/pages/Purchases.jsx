@@ -125,9 +125,9 @@ export default function Purchases() {
 
           <div className="space-y-2">
             {items.map((it, idx) => (
-              <div key={idx} className="flex gap-2 items-center">
+              <div key={idx} className="flex flex-wrap gap-2 items-center">
                 <select
-                  className="flex-1 border rounded px-2 py-1 text-sm"
+                  className="flex-1 min-w-[150px] border rounded px-2 py-1 text-sm"
                   value={it.product_id}
                   onChange={(e) => updateLine(idx, 'product_id', e.target.value)}
                 >
@@ -178,7 +178,7 @@ export default function Purchases() {
         {/* Recent purchases */}
         <div className="bg-white rounded-lg shadow p-4">
           <h2 className="font-semibold text-slate-700 mb-2">Recent Purchases</h2>
-          <div className="overflow-auto max-h-[60vh]">
+          <div className="overflow-x-auto max-h-[60vh] table-wrap">
             <table className="w-full text-sm">
               <tbody>
                 {purchases.map((p) => (
@@ -206,7 +206,7 @@ export default function Purchases() {
       {/* New supplier modal */}
       {showSupplierModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <form onSubmit={handleCreateSupplier} className="bg-white p-5 rounded-lg w-80 space-y-2">
+          <form onSubmit={handleCreateSupplier} className="bg-white p-5 rounded-lg w-[min(92vw,20rem)] space-y-2">
             <h2 className="font-bold">New Supplier</h2>
             <input className="w-full border rounded px-2 py-1" placeholder="Name *" required
               value={supForm.name} onChange={(e) => setSupForm({ ...supForm, name: e.target.value })} />
@@ -229,7 +229,7 @@ export default function Purchases() {
       {/* Purchase detail modal */}
       {detail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white p-5 rounded-lg w-96 max-h-[90vh] overflow-auto">
+          <div className="bg-white p-5 rounded-lg w-[min(92vw,24rem)] max-h-[90vh] overflow-auto">
             <h2 className="font-bold mb-2">Purchase #{detail.purchase.id}</h2>
             <div className="text-sm text-slate-600 mb-2">
               Supplier: {detail.purchase.supplier_name} <br />

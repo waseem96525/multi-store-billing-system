@@ -38,7 +38,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-slate-800">
       <form
         onSubmit={handleSubmit}
-        className="bg-white p-8 rounded-lg shadow-md w-80 space-y-4"
+        className="bg-white p-8 rounded-lg shadow-md w-[min(92vw,20rem)] space-y-4"
       >
         <h1 className="text-xl font-bold text-center text-slate-800">Retail POS Login</h1>
         {error && <div className="text-red-600 text-sm text-center">{error}</div>}

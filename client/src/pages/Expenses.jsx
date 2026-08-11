@@ -61,9 +61,9 @@ export default function Expenses() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-slate-800">Expenses</h1>
-        <div className="bg-white rounded-lg shadow px-4 py-2">
+        <div className="bg-white rounded-lg shadow px-4 py-2 self-start">
           <span className="text-sm text-slate-500">Total: </span>
           <span className="font-bold text-slate-800">Rs {total.toFixed(2)}</span>
         </div>
@@ -115,7 +115,7 @@ export default function Expenses() {
         </button>
       </form>
 
-      <div className="bg-white rounded-lg shadow overflow-auto">
+      <div className="bg-white rounded-lg shadow table-wrap">
         <h2 className="font-semibold p-4 pb-2 text-slate-700">Expense History</h2>
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 text-left">

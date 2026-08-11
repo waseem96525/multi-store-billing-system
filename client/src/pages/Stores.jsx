@@ -124,7 +124,7 @@ export default function Stores() {
         </form>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-auto">
+      <div className="bg-white rounded-lg shadow table-wrap">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 text-left">
             <tr>

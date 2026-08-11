@@ -56,6 +56,7 @@ export default function POS() {
   const [editingPrice, setEditingPrice] = useState(null);
   const [receivedCash, setReceivedCash] = useState('');
   const [creditSale, setCreditSale] = useState(false);
+  const [showCart, setShowCart] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [confetti, setConfetti] = useState([]);
 
@@ -392,6 +393,7 @@ export default function POS() {
       const detail = await getInvoice(res.invoice.invoiceId);
       setReceipt(detail);
       dispatch(clearCart());
+      setShowCart(false);
       setSelectedCustomer('');
       setReceivedCash('');
       setCreditSale(false);
@@ -408,7 +410,7 @@ export default function POS() {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full pb-20 lg:pb-0">
       {/* Toasts */}
       <div className="fixed top-4 right-4 z-[60] space-y-2 w-72">
         {toasts.map((t) => (
@@ -459,10 +461,10 @@ export default function POS() {
           </button>
         </div>
 
-        <div className="flex gap-2 mb-2">
+        <div className="flex flex-wrap gap-2 mb-2">
           <input
             ref={searchRef}
-            className="flex-1 border rounded px-3 py-2 focus:ring-2 focus:ring-emerald-400 outline-none transition"
+            className="flex-1 min-w-[140px] border rounded px-3 py-2 focus:ring-2 focus:ring-emerald-400 outline-none transition"
             placeholder="Search by name / SKU / barcode (or scan)…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -538,9 +540,27 @@ export default function POS() {
         </div>
       </div>
 
-      {/* Cart / Checkout */}
-      <div className="bg-white rounded-lg shadow p-4 flex flex-col">
-        <h2 className="font-semibold text-slate-700 mb-2">Cart</h2>
+      {/* Cart / Checkout - full column on desktop, full-screen overlay on mobile */}
+      <div
+        className={
+          showCart
+            ? 'fixed inset-0 z-50 flex flex-col bg-white rounded-lg shadow p-4 animate-fade-in'
+            : 'hidden lg:flex lg:flex-col bg-white rounded-lg shadow p-4'
+        }
+      >
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-semibold text-slate-700">Cart</h2>
+          <button
+            type="button"
+            onClick={() => setShowCart(false)}
+            className="lg:hidden p-1 -mr-1 text-slate-500 hover:text-slate-800"
+            aria-label="Close cart"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
         {error && <div className="text-red-600 text-sm mb-2 animate-shake">{error}</div>}
 
         {/* Parked bills */}
@@ -804,6 +824,21 @@ export default function POS() {
         </div>
       </div>
 
+      {/* Mobile cart bottom bar */}
+      <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-800 text-white flex items-center justify-between px-4 py-3 shadow-lg">
+        <div>
+          <div className="text-xs text-slate-300">{cart.items.length} item(s)</div>
+          <div className="font-bold text-lg">₹{grand.toFixed(2)}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowCart(true)}
+          className="bg-emerald-600 text-white px-5 py-2.5 rounded-lg font-medium active:scale-95 transition"
+        >
+          View Cart
+        </button>
+      </div>
+
       {/* Scanner modal */}
       {scanning && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 animate-fade-in">
@@ -839,7 +874,7 @@ export default function POS() {
 
       {receipt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
-          <div className="bg-white p-6 rounded-lg w-80 max-h-[90vh] overflow-auto receipt-pop">
+          <div className="bg-white p-6 rounded-lg w-[min(92vw,20rem)] max-h-[90vh] overflow-auto receipt-pop">
             <div id="receipt" className="text-sm">
               <div className="text-center font-bold mb-1">{receipt.store?.name || 'RETAIL SHOP'}</div>
               {receipt.store?.address && (

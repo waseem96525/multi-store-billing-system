@@ -112,7 +112,8 @@ export default function Returns() {
                 No returnable items on this invoice (all already returned).
               </div>
             ) : (
-              <table className="w-full text-sm">
+              <div className="table-wrap">
+                <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-slate-600 text-left">
                   <tr>
                     <th className="p-2">Product</th>
@@ -149,6 +150,7 @@ export default function Returns() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
             <input
               className="w-full border rounded px-2 py-1"
@@ -168,7 +170,7 @@ export default function Returns() {
         )}
       </form>
 
-      <div className="bg-white rounded-lg shadow overflow-auto">
+      <div className="bg-white rounded-lg shadow table-wrap">
         <h2 className="font-semibold p-4 pb-2 text-slate-700">Return History</h2>
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 text-left">

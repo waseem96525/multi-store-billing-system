@@ -38,7 +38,7 @@ export default function Dashboard() {
       </div>
 
       {data.lowStockItems && data.lowStockItems.length > 0 && (
-        <div className="bg-white p-5 rounded-lg shadow">
+        <div className="bg-white p-5 rounded-lg shadow table-wrap">
           <h2 className="font-semibold mb-3 text-slate-700">Low Stock Alerts</h2>
           <table className="w-full text-sm">
             <thead>
@@ -61,7 +61,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="bg-white p-5 rounded-lg shadow">
+      <div className="bg-white p-5 rounded-lg shadow table-wrap">
         <h2 className="font-semibold mb-3 text-slate-700">Top Selling Products</h2>
         {data.topProducts.length === 0 ? (
           <div className="text-slate-400 text-sm">No sales yet.</div>

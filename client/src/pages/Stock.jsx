@@ -80,7 +80,7 @@ export default function Stock() {
         </button>
       </form>
 
-      <div className="bg-white rounded-lg shadow overflow-auto">
+      <div className="bg-white rounded-lg shadow table-wrap">
         <h2 className="font-semibold p-4 pb-2 text-slate-700">Adjustment History</h2>
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 text-left">

@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 @keyframes slideInUp {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
@@ -40,6 +44,7 @@
 }
 
 .animate-slide-in { animation: slideInUp 0.3s ease-out; }
+.animate-slide-left { animation: slideInLeft 0.25s ease-out; }
 .animate-fade-in { animation: fadeIn 0.3s ease-out; }
 .animate-shake { animation: shake 0.45s ease-in-out; }
 .animate-bounce-in { animation: bounceIn 0.45s ease-out both; }
@@ -107,3 +112,15 @@
   position: absolute; top: -12px; width: 9px; height: 14px; border-radius: 2px;
   animation: confettiFall 2.4s linear forwards;
 }
+
+/* ---- Responsive helpers ---- */
+html { -webkit-text-size-adjust: 100%; }
+
+@media (max-width: 640px) {
+  button, select, input, textarea { -webkit-tap-highlight-color: transparent; }
+  input, select, textarea { font-size: 16px; } /* prevents iOS zoom on focus */
+}
+
+/* Tables scroll horizontally on small screens instead of squishing */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-wrap table { min-width: 600px; }

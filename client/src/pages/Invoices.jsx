@@ -39,10 +39,10 @@ export default function Invoices() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-slate-800">Sales / Invoices</h1>
         <input
-          className="border rounded px-3 py-2 w-64"
+          className="border rounded px-3 py-2 w-full sm:w-64"
           placeholder="Search invoice no..."
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -51,7 +51,7 @@ export default function Invoices() {
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
-      <div className="bg-white rounded-lg shadow overflow-auto">
+      <div className="bg-white rounded-lg shadow table-wrap">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr className="text-left">
@@ -93,7 +93,7 @@ export default function Invoices() {
 
       {detail && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg w-96 max-h-[90vh] overflow-auto">
+          <div className="bg-white p-6 rounded-lg w-[min(92vw,24rem)] max-h-[90vh] overflow-auto">
             <div id="receipt" className="text-sm">
               <div className="text-center font-bold mb-1">{detail.store?.name || 'RETAIL SHOP'}</div>
               {detail.store?.address && (
