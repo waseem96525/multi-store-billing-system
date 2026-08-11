@@ -5,3 +5,6 @@ server/data/
 client/dist/
 .env
 .vercel/
+
+.vercel
+.env*
