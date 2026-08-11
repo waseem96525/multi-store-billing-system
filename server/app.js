@@ -10,6 +10,10 @@ const supplierRoutes = require('./routes/suppliers');
 const purchaseRoutes = require('./routes/purchases');
 const stockRoutes = require('./routes/stock');
 const customerRoutes = require('./routes/customers');
+const storeRoutes = require('./routes/stores');
+const expenseRoutes = require('./routes/expenses');
+const returnRoutes = require('./routes/returns');
+const reportRoutes = require('./routes/reports');
 
 require('./db'); // initialize database + seed admin
 
@@ -29,6 +33,10 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/stock', stockRoutes);
+app.use('/api/stores', storeRoutes);
+app.use('/api/expenses', expenseRoutes);
+app.use('/api/returns', returnRoutes);
+app.use('/api/reports', reportRoutes);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {

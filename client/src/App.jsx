@@ -9,6 +9,11 @@ import Inventory from './pages/Inventory';
 import Purchases from './pages/Purchases';
 import Stock from './pages/Stock';
 import Users from './pages/Users';
+import Reports from './pages/Reports';
+import Expenses from './pages/Expenses';
+import Returns from './pages/Returns';
+import Settings from './pages/Settings';
+import Stores from './pages/Stores';
 
 export default function App() {
   return (
@@ -24,6 +29,11 @@ export default function App() {
           <Route path="/purchases" element={<Purchases />} />
           <Route path="/stock" element={<Stock />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/expenses" element={<Expenses />} />
+          <Route path="/returns" element={<Returns />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/stores" element={<Stores />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

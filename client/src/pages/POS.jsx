@@ -841,7 +841,16 @@ export default function POS() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
           <div className="bg-white p-6 rounded-lg w-80 max-h-[90vh] overflow-auto receipt-pop">
             <div id="receipt" className="text-sm">
-              <div className="text-center font-bold mb-2">RETAIL SHOP</div>
+              <div className="text-center font-bold mb-1">{receipt.store?.name || 'RETAIL SHOP'}</div>
+              {receipt.store?.address && (
+                <div className="text-center text-xs text-slate-600">{receipt.store.address}</div>
+              )}
+              {receipt.store?.phone && (
+                <div className="text-center text-xs text-slate-600">Ph: {receipt.store.phone}</div>
+              )}
+              {receipt.store?.gstin && (
+                <div className="text-center text-xs text-slate-600">GSTIN: {receipt.store.gstin}</div>
+              )}
               <div className="text-center text-xs mb-3">
                 Invoice: {receipt.invoice.invoice_no}
                 <br />
@@ -888,7 +897,11 @@ export default function POS() {
                 </div>
                 <div className="text-xs mt-1">Mode: {receipt.invoice.payment_mode}</div>
               </div>
-              <div className="text-center text-xs mt-3">Thank you!</div>
+              {receipt.store?.receipt_footer ? (
+                <div className="text-center text-xs mt-3">{receipt.store.receipt_footer}</div>
+              ) : (
+                <div className="text-center text-xs mt-3">Thank you!</div>
+              )}
             </div>
             <div className="mt-4 flex gap-2 no-print">
               <button

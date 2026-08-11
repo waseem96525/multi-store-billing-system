@@ -95,13 +95,25 @@ export default function Invoices() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg w-96 max-h-[90vh] overflow-auto">
             <div id="receipt" className="text-sm">
-              <div className="text-center font-bold mb-2">RETAIL SHOP</div>
+              <div className="text-center font-bold mb-1">{detail.store?.name || 'RETAIL SHOP'}</div>
+              {detail.store?.address && (
+                <div className="text-center text-xs text-slate-600">{detail.store.address}</div>
+              )}
+              {detail.store?.phone && (
+                <div className="text-center text-xs text-slate-600">Ph: {detail.store.phone}</div>
+              )}
+              {detail.store?.gstin && (
+                <div className="text-center text-xs text-slate-600">GSTIN: {detail.store.gstin}</div>
+              )}
               <div className="text-center text-xs mb-3">
                 Invoice: {detail.invoice.invoice_no}
                 <br />
                 {new Date(detail.invoice.created_at).toLocaleString()}
                 <br />
                 Cashier: {detail.cashier?.name}
+                {detail.invoice.status === 'credit' && (
+                  <span className="text-amber-600"> · CREDIT</span>
+                )}
               </div>
               <table className="w-full">
                 <tbody>
@@ -139,6 +151,11 @@ export default function Invoices() {
                 </div>
                 <div className="text-xs mt-1">Mode: {detail.invoice.payment_mode}</div>
               </div>
+              {detail.store?.receipt_footer ? (
+                <div className="text-center text-xs mt-3">{detail.store.receipt_footer}</div>
+              ) : (
+                <div className="text-center text-xs mt-3">Thank you!</div>
+              )}
             </div>
             <div className="mt-4 flex gap-2 no-print">
               <button

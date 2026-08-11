@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { login } from '../api/auth';
 import { setCredentials } from '../store/slices/authSlice';
+import { setCurrentStore } from '../store/slices/storeSlice';
 
 export default function Login() {
   const dispatch = useDispatch();
@@ -22,6 +23,9 @@ export default function Login() {
     try {
       const data = await login(username, password);
       dispatch(setCredentials(data));
+      if (data.user?.store_id) {
+        dispatch(setCurrentStore(data.user.store_id));
+      }
       navigate('/', { replace: true });
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');

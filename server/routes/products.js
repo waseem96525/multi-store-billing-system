@@ -1,16 +1,21 @@
 const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
+const { attachStore } = require('../middleware/store');
 
 const router = express.Router();
 
-router.get('/', authenticate, (req, res) => {
+router.use(authenticate, attachStore);
+
+router.get('/', (req, res) => {
   const { q, category_id, low_stock } = req.query;
-  let sql = `SELECT p.*, c.name AS category_name
+  let sql = `SELECT p.*, c.name AS category_name,
+             ps.stock_qty, ps.reorder_level
              FROM products p
              LEFT JOIN categories c ON p.category_id = c.id
+             LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
              WHERE 1=1`;
-  const params = [];
+  const params = [req.storeId];
   if (q) {
     sql += ' AND (p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?)';
     params.push(`%${q}%`, `%${q}%`, `%${q}%`);
@@ -20,7 +25,7 @@ router.get('/', authenticate, (req, res) => {
     params.push(category_id);
   }
   if (low_stock === '1') {
-    sql += ' AND p.stock_qty <= p.reorder_level';
+    sql += ' AND ps.stock_qty <= ps.reorder_level';
   }
   sql += ' ORDER BY p.name LIMIT 500';
   const rows = db.prepare(sql).all(...params);
@@ -28,33 +33,41 @@ router.get('/', authenticate, (req, res) => {
 });
 
 // Quick lookup by exact barcode or SKU (used by the POS scanner)
-router.get('/barcode/:code', authenticate, (req, res) => {
+router.get('/barcode/:code', (req, res) => {
   const code = req.params.code;
   const product = db
-    .prepare('SELECT * FROM products WHERE barcode = ? OR sku = ? LIMIT 1')
-    .get(code, code);
+    .prepare(
+      `SELECT p.*, ps.stock_qty, ps.reorder_level
+       FROM products p
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
+       WHERE p.barcode = ? OR p.sku = ? LIMIT 1`
+    )
+    .get(req.storeId, code, code);
   if (!product) return res.status(404).json({ error: 'Product not found' });
   res.json({ product });
 });
 
-// Top-selling products for the POS "Quick Add" shelf
-router.get('/frequent', authenticate, (req, res) => {
+// Top-selling products for the POS "Quick Add" shelf (scoped to current store)
+router.get('/frequent', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 50);
   const rows = db
     .prepare(
-      `SELECT p.*, c.name AS category_name, COALESCE(SUM(ii.qty), 0) AS sold_qty
+      `SELECT p.*, c.name AS category_name, ps.stock_qty, ps.reorder_level,
+              COALESCE(SUM(ii.qty), 0) AS sold_qty
        FROM products p
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
        LEFT JOIN invoice_items ii ON ii.product_id = p.id
+       LEFT JOIN invoices i ON i.id = ii.invoice_id AND i.store_id = ?
        LEFT JOIN categories c ON p.category_id = c.id
        GROUP BY p.id
        ORDER BY sold_qty DESC, p.name ASC
        LIMIT ?`
     )
-    .all(limit);
+    .all(req.storeId, req.storeId, limit);
   res.json({ products: rows });
 });
 
-router.post('/', authenticate, authorize('admin', 'inventory'), (req, res) => {
+router.post('/', authorize('admin', 'inventory'), (req, res) => {
   const {
     name,
     sku,
@@ -68,13 +81,20 @@ router.post('/', authenticate, authorize('admin', 'inventory'), (req, res) => {
     reorder_level,
   } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
-  const info = db
-    .prepare(
+
+  db.exec('BEGIN');
+  try {
+    // NOTE: prepare statements after BEGIN - required for remote (Hrana/Turso) transactions
+    const insertProduct = db.prepare(
       `INSERT INTO products
-       (name, sku, barcode, category_id, unit, cost_price, selling_price, tax_percent, stock_qty, reorder_level)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
-    )
-    .run(
+       (name, sku, barcode, category_id, unit, cost_price, selling_price, tax_percent)
+       VALUES (?,?,?,?,?,?,?,?)`
+    );
+    const insertStock = db.prepare(
+      `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
+       VALUES (?,?,?,?)`
+    );
+    const info = insertProduct.run(
       name,
       sku || null,
       barcode || null,
@@ -82,15 +102,31 @@ router.post('/', authenticate, authorize('admin', 'inventory'), (req, res) => {
       unit || 'pcs',
       cost_price || 0,
       selling_price || 0,
-      tax_percent || 0,
-      stock_qty || 0,
-      reorder_level || 0
+      tax_percent || 0
     );
-  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json({ product });
+    // Give every existing store a row (zero stock), then set the creating store's stock
+    db.exec(
+      `INSERT OR IGNORE INTO product_stock (product_id, store_id, stock_qty, reorder_level)
+       SELECT ${info.lastInsertRowid}, id, 0, 0 FROM stores`
+    );
+    insertStock.run(info.lastInsertRowid, req.storeId, stock_qty || 0, reorder_level || 0);
+    db.exec('COMMIT');
+    const product = db
+      .prepare(
+        `SELECT p.*, ps.stock_qty, ps.reorder_level
+         FROM products p
+         LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
+         WHERE p.id = ?`
+      )
+      .get(req.storeId, info.lastInsertRowid);
+    res.status(201).json({ product });
+  } catch (e) {
+    db.exec('ROLLBACK');
+    res.status(400).json({ error: e.message });
+  }
 });
 
-router.put('/:id', authenticate, authorize('admin', 'inventory'), (req, res) => {
+router.put('/:id', authorize('admin', 'inventory'), (req, res) => {
   const id = req.params.id;
   const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ error: 'Product not found' });
@@ -106,34 +142,72 @@ router.put('/:id', authenticate, authorize('admin', 'inventory'), (req, res) => 
     stock_qty,
     reorder_level,
   } = req.body || {};
-  db.prepare(
-    `UPDATE products SET
-       name=?, sku=?, barcode=?, category_id=?, unit=?,
-       cost_price=?, selling_price=?, tax_percent=?, stock_qty=?, reorder_level=?,
-       updated_at=datetime('now')
-     WHERE id=?`
-  ).run(
-    name ?? existing.name,
-    sku ?? existing.sku,
-    barcode ?? existing.barcode,
-    category_id ?? existing.category_id,
-    unit ?? existing.unit,
-    cost_price ?? existing.cost_price,
-    selling_price ?? existing.selling_price,
-    tax_percent ?? existing.tax_percent,
-    stock_qty ?? existing.stock_qty,
-    reorder_level ?? existing.reorder_level,
-    id
-  );
-  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
-  res.json({ product });
+
+  db.exec('BEGIN');
+  try {
+    const updateProduct = db.prepare(
+      `UPDATE products SET
+         name=?, sku=?, barcode=?, category_id=?, unit=?,
+         cost_price=?, selling_price=?, tax_percent=?,
+         updated_at=datetime('now')
+       WHERE id=?`
+    );
+    const updateStock = db.prepare(
+      `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
+       VALUES (?,?,?,?)
+       ON CONFLICT(product_id, store_id) DO UPDATE SET
+         stock_qty = excluded.stock_qty,
+         reorder_level = excluded.reorder_level`
+    );
+    updateProduct.run(
+      name ?? existing.name,
+      sku ?? existing.sku,
+      barcode ?? existing.barcode,
+      category_id ?? existing.category_id,
+      unit ?? existing.unit,
+      cost_price ?? existing.cost_price,
+      selling_price ?? existing.selling_price,
+      tax_percent ?? existing.tax_percent,
+      id
+    );
+    const curStock = db
+      .prepare('SELECT * FROM product_stock WHERE product_id = ? AND store_id = ?')
+      .get(id, req.storeId);
+    updateStock.run(
+      id,
+      req.storeId,
+      stock_qty ?? (curStock ? curStock.stock_qty : 0),
+      reorder_level ?? (curStock ? curStock.reorder_level : 0)
+    );
+    db.exec('COMMIT');
+    const product = db
+      .prepare(
+        `SELECT p.*, ps.stock_qty, ps.reorder_level
+         FROM products p
+         LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
+         WHERE p.id = ?`
+      )
+      .get(req.storeId, id);
+    res.json({ product });
+  } catch (e) {
+    db.exec('ROLLBACK');
+    res.status(400).json({ error: e.message });
+  }
 });
 
-router.delete('/:id', authenticate, authorize('admin', 'inventory'), (req, res) => {
+router.delete('/:id', authorize('admin', 'inventory'), (req, res) => {
   try {
-    const info = db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
-    if (info.changes === 0) return res.status(404).json({ error: 'Product not found' });
-    res.json({ success: true });
+    db.exec('BEGIN');
+    try {
+      db.prepare('DELETE FROM product_stock WHERE product_id = ?').run(req.params.id);
+      const info = db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
+      db.exec('COMMIT');
+      if (info.changes === 0) return res.status(404).json({ error: 'Product not found' });
+      res.json({ success: true });
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
   } catch (e) {
     if (String(e.message).includes('FOREIGN KEY')) {
       return res
@@ -144,11 +218,11 @@ router.delete('/:id', authenticate, authorize('admin', 'inventory'), (req, res) 
   }
 });
 
-router.get('/categories/all', authenticate, (req, res) => {
+router.get('/categories/all', (req, res) => {
   res.json({ categories: db.prepare('SELECT * FROM categories ORDER BY name').all() });
 });
 
-router.post('/categories', authenticate, authorize('admin', 'inventory'), (req, res) => {
+router.post('/categories', authorize('admin', 'inventory'), (req, res) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   try {

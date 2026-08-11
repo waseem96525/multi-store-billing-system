@@ -6,6 +6,8 @@ const api = axios.create({ baseURL: '/api' });
 api.interceptors.request.use((config) => {
   const token = store.getState().auth.token;
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  const storeId = store.getState().store.currentStoreId;
+  if (storeId) config.headers['X-Store-Id'] = String(storeId);
   return config;
 });
 

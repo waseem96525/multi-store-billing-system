@@ -1,8 +1,11 @@
 const express = require('express');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { attachStore } = require('../middleware/store');
 
 const router = express.Router();
+
+router.use(authenticate, attachStore);
 
 function nextInvoiceNo() {
   const last = db.prepare('SELECT invoice_no FROM invoices ORDER BY id DESC LIMIT 1').get();
@@ -12,38 +15,44 @@ function nextInvoiceNo() {
 }
 
 // ---- Held bills (park a cart and resume later) ----
-router.post('/hold', authenticate, (req, res) => {
+router.post('/hold', (req, res) => {
   const { payload, label } = req.body || {};
   if (!payload || !Array.isArray(payload.items)) {
     return res.status(400).json({ error: 'Invalid cart payload' });
   }
   const info = db
-    .prepare('INSERT INTO held_bills (payload, label, created_by) VALUES (?,?,?)')
-    .run(JSON.stringify(payload), label || null, req.user.id);
+    .prepare('INSERT INTO held_bills (payload, label, created_by, store_id) VALUES (?,?,?,?)')
+    .run(JSON.stringify(payload), label || null, req.user.id, req.storeId);
   const held = db.prepare('SELECT * FROM held_bills WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ heldBill: { ...held, payload: JSON.parse(held.payload) } });
 });
 
-router.get('/held', authenticate, (req, res) => {
-  const rows = db.prepare('SELECT * FROM held_bills ORDER BY id DESC').all();
+router.get('/held', (req, res) => {
+  const rows = db
+    .prepare('SELECT * FROM held_bills WHERE store_id = ? ORDER BY id DESC')
+    .all(req.storeId);
   res.json({
     heldBills: rows.map((r) => ({ ...r, payload: JSON.parse(r.payload) })),
   });
 });
 
-router.post('/retrieve/:id', authenticate, (req, res) => {
-  const held = db.prepare('SELECT * FROM held_bills WHERE id = ?').get(req.params.id);
+router.post('/retrieve/:id', (req, res) => {
+  const held = db
+    .prepare('SELECT * FROM held_bills WHERE id = ? AND store_id = ?')
+    .get(req.params.id, req.storeId);
   if (!held) return res.status(404).json({ error: 'Held bill not found' });
   res.json({ heldBill: { ...held, payload: JSON.parse(held.payload) } });
 });
 
-router.delete('/held/:id', authenticate, (req, res) => {
-  const info = db.prepare('DELETE FROM held_bills WHERE id = ?').run(req.params.id);
+router.delete('/held/:id', (req, res) => {
+  const info = db
+    .prepare('DELETE FROM held_bills WHERE id = ? AND store_id = ?')
+    .run(req.params.id, req.storeId);
   if (info.changes === 0) return res.status(404).json({ error: 'Held bill not found' });
   res.json({ success: true });
 });
 
-router.post('/', authenticate, (req, res) => {
+router.post('/', (req, res) => {
   const {
     items,
     discount = 0,
@@ -57,23 +66,27 @@ router.post('/', authenticate, (req, res) => {
     return res.status(400).json({ error: 'items required' });
   }
 
-  const insertInvoice = db.prepare(
-    `INSERT INTO invoices
-     (invoice_no, customer_id, subtotal, discount, tax_total, grand_total, payment_mode, created_by, amount_paid, status, due_date)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-  );
-  const insertItem = db.prepare(
-    `INSERT INTO invoice_items
-     (invoice_id, product_id, qty, unit_price, discount, tax_percent, tax_amount, line_total)
-     VALUES (?,?,?,?,?,?,?,?)`
-  );
-  const getProduct = db.prepare('SELECT * FROM products WHERE id = ?');
-  const updateStock = db.prepare(
-    "UPDATE products SET stock_qty = stock_qty - ?, updated_at = datetime('now') WHERE id = ?"
-  );
-
   db.exec('BEGIN');
   try {
+    // NOTE: prepare statements after BEGIN - required for remote (Hrana/Turso) transactions
+    const getStock = db.prepare(
+      'SELECT stock_qty FROM product_stock WHERE product_id = ? AND store_id = ?'
+    );
+    const getProduct = db.prepare('SELECT * FROM products WHERE id = ?');
+    const updateStock = db.prepare(
+      'UPDATE product_stock SET stock_qty = stock_qty - ? WHERE product_id = ? AND store_id = ?'
+    );
+    const insertInvoice = db.prepare(
+      `INSERT INTO invoices
+       (invoice_no, customer_id, subtotal, discount, tax_total, grand_total, payment_mode, created_by, amount_paid, status, due_date, store_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    );
+    const insertItem = db.prepare(
+      `INSERT INTO invoice_items
+       (invoice_id, product_id, qty, unit_price, discount, tax_percent, tax_amount, line_total, cost_price)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    );
+
     let subtotal = 0;
     let taxTotal = 0;
     const processed = [];
@@ -82,7 +95,9 @@ router.post('/', authenticate, (req, res) => {
       if (!product) throw new Error('Product not found: ' + it.product_id);
       const qty = Number(it.qty);
       if (!(qty > 0)) throw new Error('Invalid quantity for ' + product.name);
-      if (product.stock_qty < qty) {
+      const stockRow = getStock.get(it.product_id, req.storeId);
+      const available = stockRow ? stockRow.stock_qty : 0;
+      if (available < qty) {
         throw new Error('Insufficient stock for ' + product.name);
       }
       const unitPrice = Number(it.unit_price ?? product.selling_price);
@@ -101,8 +116,9 @@ router.post('/', authenticate, (req, res) => {
         tax_percent: lineTaxPct,
         tax_amount: taxAmount,
         line_total: lineTotal,
+        cost_price: product.cost_price || 0,
       });
-      updateStock.run(qty, product.id);
+      updateStock.run(qty, product.id, req.storeId);
     }
     const grandTotal = subtotal - Number(discount) + taxTotal;
     const invoiceNo = nextInvoiceNo();
@@ -117,7 +133,8 @@ router.post('/', authenticate, (req, res) => {
       req.user.id,
       Number(amount_paid) || 0,
       status,
-      due_date
+      due_date,
+      req.storeId
     );
     const invoiceId = info.lastInsertRowid;
     for (const p of processed) {
@@ -129,7 +146,8 @@ router.post('/', authenticate, (req, res) => {
         p.discount,
         p.tax_percent,
         p.tax_amount,
-        p.line_total
+        p.line_total,
+        p.cost_price
       );
     }
     db.exec('COMMIT');
@@ -151,23 +169,26 @@ router.post('/', authenticate, (req, res) => {
   }
 });
 
-router.get('/', authenticate, (req, res) => {
+router.get('/', (req, res) => {
   const { q } = req.query;
   let sql = `SELECT i.*, u.name AS cashier_name,
              (SELECT COUNT(*) FROM invoice_items ii WHERE ii.invoice_id = i.id) AS item_count
              FROM invoices i
-             LEFT JOIN users u ON i.created_by = u.id`;
-  const params = [];
+             LEFT JOIN users u ON i.created_by = u.id
+             WHERE i.store_id = ?`;
+  const params = [req.storeId];
   if (q) {
-    sql += ' WHERE i.invoice_no LIKE ?';
+    sql += ' AND i.invoice_no LIKE ?';
     params.push(`%${q}%`);
   }
   sql += ' ORDER BY i.id DESC LIMIT 200';
   res.json({ invoices: db.prepare(sql).all(...params) });
 });
 
-router.get('/:id', authenticate, (req, res) => {
-  const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(req.params.id);
+router.get('/:id', (req, res) => {
+  const invoice = db
+    .prepare('SELECT * FROM invoices WHERE id = ? AND store_id = ?')
+    .get(req.params.id, req.storeId);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   const items = db
     .prepare(
@@ -179,7 +200,8 @@ router.get('/:id', authenticate, (req, res) => {
   const cashier = db
     .prepare('SELECT name, username FROM users WHERE id = ?')
     .get(invoice.created_by);
-  res.json({ invoice, items, cashier });
+  const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(invoice.store_id);
+  res.json({ invoice, items, cashier, store });
 });
 
 module.exports = router;

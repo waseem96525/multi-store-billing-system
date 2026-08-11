@@ -19,6 +19,7 @@ router.post('/login', (req, res) => {
     username: user.username,
     name: user.name,
     role: user.role,
+    store_id: user.store_id,
   });
   res.json({
     token,
@@ -27,45 +28,73 @@ router.post('/login', (req, res) => {
       name: user.name,
       username: user.username,
       role: user.role,
+      store_id: user.store_id,
     },
   });
 });
 
 router.get('/me', authenticate, (req, res) => {
   const user = db
-    .prepare('SELECT id, name, username, role, active, created_at FROM users WHERE id = ?')
+    .prepare(
+      `SELECT u.id, u.name, u.username, u.role, u.active, u.store_id, u.created_at,
+              s.name AS store_name
+       FROM users u LEFT JOIN stores s ON s.id = u.store_id
+       WHERE u.id = ?`
+    )
     .get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({ user });
 });
 
 router.post('/register', authenticate, authorize('admin'), (req, res) => {
-  const { name, username, password, role } = req.body || {};
+  const { name, username, password, role, store_id } = req.body || {};
   if (!name || !username || !password) {
     return res.status(400).json({ error: 'name, username, password required' });
   }
   const allowedRoles = ['admin', 'cashier', 'inventory'];
   const userRole = allowedRoles.includes(role) ? role : 'cashier';
+  const userStoreId = Number(store_id) || req.user.store_id || 1;
+  const store = db.prepare('SELECT id FROM stores WHERE id = ?').get(userStoreId);
+  if (!store) return res.status(400).json({ error: 'Invalid store' });
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (existing) return res.status(409).json({ error: 'Username already exists' });
   const info = db
-    .prepare('INSERT INTO users (name, username, password_hash, role) VALUES (?,?,?,?)')
-    .run(name, username, hashPassword(password), userRole);
-  res.status(201).json({ id: info.lastInsertRowid, name, username, role: userRole });
+    .prepare('INSERT INTO users (name, username, password_hash, role, store_id) VALUES (?,?,?,?,?)')
+    .run(name, username, hashPassword(password), userRole, userStoreId);
+  res.status(201).json({ id: info.lastInsertRowid, name, username, role: userRole, store_id: userStoreId });
 });
 
 router.get('/users', authenticate, authorize('admin'), (req, res) => {
   const users = db
-    .prepare('SELECT id, name, username, role, active, created_at FROM users ORDER BY id')
+    .prepare(
+      `SELECT u.id, u.name, u.username, u.role, u.active, u.store_id, u.created_at,
+              s.name AS store_name
+       FROM users u LEFT JOIN stores s ON s.id = u.store_id
+       ORDER BY u.id`
+    )
     .all();
   res.json({ users });
 });
 
 router.patch('/users/:id', authenticate, authorize('admin'), (req, res) => {
-  const { active } = req.body || {};
+  const { active, store_id } = req.body || {};
+  const sets = [];
+  const params = [];
+  if (active !== undefined) {
+    sets.push('active = ?');
+    params.push(active ? 1 : 0);
+  }
+  if (store_id !== undefined) {
+    const store = db.prepare('SELECT id FROM stores WHERE id = ?').get(store_id);
+    if (!store) return res.status(400).json({ error: 'Invalid store' });
+    sets.push('store_id = ?');
+    params.push(Number(store_id));
+  }
+  if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+  params.push(req.params.id);
   const info = db
-    .prepare('UPDATE users SET active = ? WHERE id = ?')
-    .run(active ? 1 : 0, req.params.id);
+    .prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`)
+    .run(...params);
   if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
   res.json({ success: true });
 });

@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react';
 import { listUsers, register, setUserActive } from '../api/auth';
+import { listStores } from '../api/stores';
 
-const EMPTY = { name: '', username: '', password: '', role: 'cashier' };
+const EMPTY = { name: '', username: '', password: '', role: 'cashier', store_id: '' };
 
 export default function Users() {
   const [users, setUsers] = useState([]);
+  const [stores, setStores] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
 
   const load = async () => {
     try {
-      const data = await listUsers();
+      const [data, storeData] = await Promise.all([listUsers(), listStores()]);
       setUsers(data.users);
+      setStores(storeData.stores || []);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to load');
     }
@@ -27,7 +30,7 @@ export default function Users() {
     setError('');
     setMsg('');
     try {
-      await register(form);
+      await register({ ...form, store_id: form.store_id || undefined });
       setForm(EMPTY);
       setMsg('Staff created');
       load();
@@ -38,10 +41,19 @@ export default function Users() {
 
   const toggleActive = async (u) => {
     try {
-      await setUserActive(u.id, !u.active);
+      await setUserActive(u.id, { active: !u.active });
       load();
     } catch (e) {
       setError(e.response?.data?.error || 'Failed');
+    }
+  };
+
+  const changeStore = async (u, storeId) => {
+    try {
+      await setUserActive(u.id, { store_id: Number(storeId) });
+      load();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to change store');
     }
   };
 
@@ -85,6 +97,18 @@ export default function Users() {
             <option value="inventory">Inventory Manager</option>
             <option value="admin">Admin</option>
           </select>
+          <select
+            className="w-full border rounded px-2 py-1"
+            value={form.store_id}
+            onChange={(e) => setForm({ ...form, store_id: e.target.value })}
+          >
+            <option value="">Assign to store (default: your store)</option>
+            {stores.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
           <button className="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">
             Create Staff
           </button>
@@ -98,6 +122,7 @@ export default function Users() {
               <th className="p-2">Name</th>
               <th className="p-2">Username</th>
               <th className="p-2">Role</th>
+              <th className="p-2">Store</th>
               <th className="p-2">Status</th>
               <th className="p-2"></th>
             </tr>
@@ -108,6 +133,19 @@ export default function Users() {
                 <td className="p-2">{u.name}</td>
                 <td className="p-2">{u.username}</td>
                 <td className="p-2 capitalize">{u.role}</td>
+                <td className="p-2">
+                  <select
+                    className="border rounded px-1 py-0.5 text-xs"
+                    value={u.store_id || ''}
+                    onChange={(e) => changeStore(u, e.target.value)}
+                  >
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </td>
                 <td className="p-2">{u.active ? 'Active' : 'Inactive'}</td>
                 <td className="p-2 text-right">
                   <button className="text-blue-600" onClick={() => toggleActive(u)}>
