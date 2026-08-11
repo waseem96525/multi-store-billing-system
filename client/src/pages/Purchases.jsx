@@ -39,6 +39,27 @@ export default function Purchases() {
   const addLine = () => setItems((prev) => [...prev, { ...EMPTY_LINE }]);
   const removeLine = (idx) => setItems((prev) => prev.filter((_, i) => i !== idx));
 
+  const handleLoadRestock = async () => {
+    setError('');
+    try {
+      const data = await listProducts({ low_stock: '1' });
+      const low = data.products || [];
+      if (low.length === 0) {
+        setMsg('No products are below their reorder level');
+        return;
+      }
+      const lines = low.map((p) => ({
+        product_id: String(p.id),
+        qty: Math.max(1, Math.ceil(Number(p.reorder_level) * 2 - Number(p.stock_qty))),
+        cost_price: Number(p.cost_price) || 0,
+      }));
+      setItems(lines);
+      setMsg(`Loaded ${lines.length} low-stock product(s) — adjust quantities and record the purchase`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load low stock items');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -122,6 +143,18 @@ export default function Purchases() {
             value={invoiceRef}
             onChange={(e) => setInvoiceRef(e.target.value)}
           />
+
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-slate-700">Items</span>
+            <button
+              type="button"
+              onClick={handleLoadRestock}
+              className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded hover:bg-amber-200"
+              title="Fill the list with products that are below their reorder level"
+            >
+              Load low stock
+            </button>
+          </div>
 
           <div className="space-y-2">
             {items.map((it, idx) => (

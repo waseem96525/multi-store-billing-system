@@ -215,4 +215,51 @@ router.get('/expense-breakdown', (req, res) => {
   res.json({ breakdown: rows });
 });
 
+// Profit by product + daily profit series
+router.get('/profit', (req, res) => {
+  const { from, to } = req.query;
+  const params = [req.storeId];
+  let dateFilter = '';
+  if (from) {
+    dateFilter += ' AND date(i.created_at) >= date(?)';
+    params.push(from);
+  }
+  if (to) {
+    dateFilter += ' AND date(i.created_at) <= date(?)';
+    params.push(to);
+  }
+
+  const products = db
+    .prepare(
+      `SELECT p.id, p.name, p.sku, c.name AS category_name,
+              COALESCE(SUM(ii.qty), 0) AS qty_sold,
+              COALESCE(SUM(ii.line_total), 0) AS sales_value,
+              COALESCE(SUM(ii.qty * ii.cost_price), 0) AS cogs,
+              COALESCE(SUM(ii.line_total), 0) - COALESCE(SUM(ii.qty * ii.cost_price), 0) AS profit
+       FROM invoice_items ii
+       JOIN invoices i ON i.id = ii.invoice_id
+       LEFT JOIN products p ON p.id = ii.product_id
+       LEFT JOIN categories c ON c.id = p.category_id
+       WHERE i.store_id = ?${dateFilter}
+       GROUP BY p.id
+       ORDER BY profit DESC`
+    )
+    .all(...params);
+
+  const daily = db
+    .prepare(
+      `SELECT date(i.created_at) AS day,
+              COALESCE(SUM(ii.line_total), 0) AS sales_value,
+              COALESCE(SUM(ii.qty * ii.cost_price), 0) AS cogs,
+              COALESCE(SUM(ii.line_total), 0) - COALESCE(SUM(ii.qty * ii.cost_price), 0) AS profit
+       FROM invoice_items ii
+       JOIN invoices i ON i.id = ii.invoice_id
+       WHERE i.store_id = ?${dateFilter}
+       GROUP BY date(i.created_at) ORDER BY day`
+    )
+    .all(...params);
+
+  res.json({ products, daily });
+});
+
 module.exports = router;

@@ -76,6 +76,9 @@ export default function Layout() {
             <NavLink to="/stock" className={navClass} onClick={() => setMenuOpen(false)}>
               Stock Adjustments
             </NavLink>
+            <NavLink to="/transfers" className={navClass} onClick={() => setMenuOpen(false)}>
+              Stock Transfers
+            </NavLink>
             <NavLink to="/returns" className={navClass} onClick={() => setMenuOpen(false)}>
               Returns / Refunds
             </NavLink>

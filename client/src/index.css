@@ -102,6 +102,10 @@
     margin: 0 auto;
     padding: 0;
   }
+  /* Barcode label sheets fill the full page */
+  #print-root:has(.label-sheet) {
+    max-width: 100%;
+  }
   #print-root table {
     width: 100%;
     border-collapse: collapse;

@@ -8,3 +8,4 @@ export const getPaymentModes = (params) =>
   api.get('/reports/payment-modes', { params }).then((r) => r.data);
 export const getExpenseBreakdown = (params) =>
   api.get('/reports/expense-breakdown', { params }).then((r) => r.data);
+export const getProfit = (params) => api.get('/reports/profit', { params }).then((r) => r.data);

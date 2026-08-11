@@ -9,6 +9,7 @@ import {
   renameCategory,
   deleteCategory,
 } from '../api/products';
+import { printLabels } from '../utils/print';
 
 const EMPTY = {
   name: '',
@@ -41,6 +42,9 @@ export default function Inventory() {
   const [showCategories, setShowCategories] = useState(false);
   const [catName, setCatName] = useState('');
   const [catError, setCatError] = useState('');
+  const [showLabels, setShowLabels] = useState(false);
+  const [labelSel, setLabelSel] = useState({});
+  const [labelCopies, setLabelCopies] = useState(1);
 
   const load = async () => {
     try {
@@ -171,6 +175,25 @@ export default function Inventory() {
     }
   };
 
+  const openLabels = () => {
+    setLabelSel(Object.fromEntries(products.map((p) => [p.id, true])));
+    setLabelCopies(1);
+    setShowLabels(true);
+  };
+
+  const handlePrintLabels = () => {
+    const sel = products.filter((p) => labelSel[p.id]);
+    const code = (p) => p.barcode || p.sku || String(p.id);
+    const items = sel.map((p) => ({
+      name: p.name,
+      price: 'Rs ' + Number(p.selling_price || 0).toFixed(2),
+      code: code(p) || String(p.id),
+      copies: Number(labelCopies) || 1,
+    }));
+    if (items.length === 0) return;
+    printLabels(items);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -181,6 +204,12 @@ export default function Inventory() {
             onClick={() => setShowCategories(true)}
           >
             Categories
+          </button>
+          <button
+            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+            onClick={openLabels}
+          >
+            Print Labels
           </button>
           <button
             className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700"
@@ -483,6 +512,79 @@ export default function Inventory() {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {showLabels && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white p-5 rounded-lg w-[min(92vw,26rem)] max-h-[90vh] overflow-auto space-y-3">
+            <h2 className="font-bold text-lg">Print Barcode Labels</h2>
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <label>Copies per label</label>
+              <input
+                type="number"
+                min={1}
+                max={99}
+                className="w-16 border rounded px-2 py-1"
+                value={labelCopies}
+                onChange={(e) => setLabelCopies(Math.max(1, Number(e.target.value) || 1))}
+              />
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <button
+                className="text-blue-600"
+                onClick={() => setLabelSel(Object.fromEntries(products.map((p) => [p.id, true])))}
+              >
+                Select all
+              </button>
+              <button
+                className="text-slate-500"
+                onClick={() => setLabelSel({})}
+              >
+                Clear
+              </button>
+            </div>
+            <div className="space-y-1 max-h-64 overflow-auto">
+              {products.map((p) => (
+                <label key={p.id} className="flex items-center gap-2 border rounded px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!labelSel[p.id]}
+                    onChange={(e) =>
+                      setLabelSel((s) => ({ ...s, [p.id]: e.target.checked }))
+                    }
+                  />
+                  <span className="flex-1">
+                    {p.name}
+                    <span className="text-xs text-slate-400 ml-1">
+                      {p.barcode || p.sku || `#${p.id}`}
+                    </span>
+                  </span>
+                  <span className="font-semibold">Rs {p.selling_price}</span>
+                </label>
+              ))}
+              {products.length === 0 && (
+                <div className="text-center text-slate-400 text-sm py-4">
+                  No products in inventory
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700"
+                onClick={handlePrintLabels}
+                disabled={products.filter((p) => labelSel[p.id]).length === 0}
+              >
+                Print
+              </button>
+              <button
+                className="flex-1 border py-2 rounded"
+                onClick={() => setShowLabels(false)}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

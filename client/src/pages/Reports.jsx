@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { getSummary, getDaily, getTopProducts, getPaymentModes, getExpenseBreakdown } from '../api/reports';
+import {
+  getSummary,
+  getDaily,
+  getTopProducts,
+  getPaymentModes,
+  getExpenseBreakdown,
+  getProfit,
+} from '../api/reports';
 
 function defaultRange() {
   const to = new Date();
@@ -23,6 +30,7 @@ export default function Reports() {
   const [topProducts, setTopProducts] = useState([]);
   const [modes, setModes] = useState([]);
   const [breakdown, setBreakdown] = useState([]);
+  const [profitProducts, setProfitProducts] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -30,18 +38,20 @@ export default function Reports() {
     setError('');
     setLoading(true);
     try {
-      const [s, d, t, m, b] = await Promise.all([
+      const [s, d, t, m, b, pr] = await Promise.all([
         getSummary(r),
         getDaily(r),
         getTopProducts(r),
         getPaymentModes(r),
         getExpenseBreakdown(r),
+        getProfit(r),
       ]);
       setSummary(s.summary);
       setDays(d.days);
       setTopProducts(t.products);
       setModes(m.modes);
       setBreakdown(b.breakdown);
+      setProfitProducts(pr.products);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to load reports');
     } finally {
@@ -76,6 +86,18 @@ export default function Reports() {
     lines.push('Product,Category,Qty Sold,Sales Value');
     topProducts.forEach((p) => lines.push(`${p.name},${p.category_name || ''},${p.qty_sold},${p.sales_value}`));
     lines.push('');
+    lines.push('Profit by Product');
+    lines.push('Product,Category,Qty Sold,Sales,Cost,Profit,Margin %');
+    profitProducts.forEach((p) =>
+      lines.push(
+        `${p.name},${p.category_name || ''},${p.qty_sold},${p.sales_value},${p.cogs},${p.profit},${(
+          Number(p.sales_value) > 0
+            ? (Number(p.profit) / Number(p.sales_value)) * 100
+            : 0
+        ).toFixed(1)}`
+      )
+    );
+    lines.push('');
     lines.push('Payment Modes');
     lines.push('Mode,Count,Total');
     modes.forEach((m) => lines.push(`${m.payment_mode},${m.count},${m.total}`));
@@ -96,6 +118,7 @@ export default function Reports() {
     ? [
         { label: 'Revenue', value: fmt(summary.revenue), color: 'text-green-600' },
         { label: 'Gross Profit', value: fmt(summary.gross_profit), color: 'text-blue-600' },
+        { label: 'COGS', value: fmt(summary.cogs), color: 'text-slate-600' },
         { label: 'Expenses', value: fmt(summary.expenses), color: 'text-orange-600' },
         { label: 'Returns', value: fmt(summary.returns_total), color: 'text-red-600' },
         { label: 'Net Profit', value: fmt(summary.net_profit), color: 'text-emerald-700' },
@@ -273,6 +296,53 @@ export default function Reports() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow table-wrap">
+        <h2 className="font-semibold p-4 pb-2 text-slate-700">Profit by Product</h2>
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600 text-left">
+            <tr>
+              <th className="p-2">Product</th>
+              <th className="p-2">Category</th>
+              <th className="p-2 text-right">Qty</th>
+              <th className="p-2 text-right">Sales</th>
+              <th className="p-2 text-right">COGS</th>
+              <th className="p-2 text-right">Profit</th>
+              <th className="p-2 text-right">Margin %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {profitProducts.map((p) => {
+              const margin =
+                Number(p.sales_value) > 0
+                  ? (Number(p.profit) / Number(p.sales_value)) * 100
+                  : 0;
+              return (
+                <tr key={p.id} className="border-t">
+                  <td className="p-2">{p.name}</td>
+                  <td className="p-2 text-xs">{p.category_name || '-'}</td>
+                  <td className="p-2 text-right">{p.qty_sold}</td>
+                  <td className="p-2 text-right">{fmt(p.sales_value)}</td>
+                  <td className="p-2 text-right">{fmt(p.cogs)}</td>
+                  <td className={`p-2 text-right font-semibold ${p.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {fmt(p.profit)}
+                  </td>
+                  <td className={`p-2 text-right ${margin >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {margin.toFixed(1)}%
+                  </td>
+                </tr>
+              );
+            })}
+            {profitProducts.length === 0 && (
+              <tr>
+                <td colSpan={7} className="p-4 text-center text-slate-400">
+                  No sales in this period
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

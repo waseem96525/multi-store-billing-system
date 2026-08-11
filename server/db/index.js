@@ -193,6 +193,26 @@ CREATE TABLE IF NOT EXISTS return_items (
   FOREIGN KEY (return_id) REFERENCES returns(id),
   FOREIGN KEY (product_id) REFERENCES products(id)
 );
+
+CREATE TABLE IF NOT EXISTS stock_transfers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_store_id INTEGER NOT NULL,
+  to_store_id INTEGER NOT NULL,
+  note TEXT,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (from_store_id) REFERENCES stores(id),
+  FOREIGN KEY (to_store_id) REFERENCES stores(id)
+);
+
+CREATE TABLE IF NOT EXISTS stock_transfer_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transfer_id INTEGER NOT NULL,
+  product_id INTEGER NOT NULL,
+  qty REAL NOT NULL,
+  FOREIGN KEY (transfer_id) REFERENCES stock_transfers(id),
+  FOREIGN KEY (product_id) REFERENCES products(id)
+);
 `);
 
 // Store-related migrations
