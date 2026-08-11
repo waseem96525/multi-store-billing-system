@@ -92,7 +92,10 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     );
     const insertStock = db.prepare(
       `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
-       VALUES (?,?,?,?)`
+       VALUES (?,?,?,?)
+       ON CONFLICT(product_id, store_id) DO UPDATE SET
+         stock_qty = excluded.stock_qty,
+         reorder_level = excluded.reorder_level`
     );
     const info = insertProduct.run(
       name,
