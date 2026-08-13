@@ -213,6 +213,18 @@ CREATE TABLE IF NOT EXISTS stock_transfer_items (
   FOREIGN KEY (transfer_id) REFERENCES stock_transfers(id),
   FOREIGN KEY (product_id) REFERENCES products(id)
 );
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  action TEXT NOT NULL,
+  details TEXT,
+  store_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_action ON activity_logs(action);
 `);
 
 // Store-related migrations

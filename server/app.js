@@ -15,6 +15,9 @@ const expenseRoutes = require('./routes/expenses');
 const returnRoutes = require('./routes/returns');
 const reportRoutes = require('./routes/reports');
 const transferRoutes = require('./routes/transfers');
+const activityRoutes = require('./routes/activity');
+const exportRoutes = require('./routes/export');
+const backupRoutes = require('./routes/backup');
 
 require('./db'); // initialize database + seed admin
 
@@ -39,6 +42,9 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/returns', returnRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/transfers', transferRoutes);
+app.use('/api/activity', activityRoutes);
+app.use('/api/export', exportRoutes);
+app.use('/api/backup', backupRoutes);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {

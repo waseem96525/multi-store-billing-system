@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -35,6 +36,7 @@ router.post('/', authorize('admin'), (req, res) => {
      SELECT id, ?, 0, 0 FROM products`
   ).run(info.lastInsertRowid);
   const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(info.lastInsertRowid);
+  logActivity(req.user, 'store_created', `Created store "${store.name}"`);
   res.status(201).json({ store });
 });
 
@@ -54,6 +56,7 @@ router.put('/current', authorize('admin'), (req, res) => {
     req.storeId
   );
   const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(req.storeId);
+  logActivity(req.user, 'store_updated', `Updated settings for "${store.name}"`, req.storeId);
   res.json({ store });
 });
 
@@ -73,6 +76,7 @@ router.put('/:id', authorize('admin'), (req, res) => {
     id
   );
   const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(id);
+  logActivity(req.user, 'store_updated', `Updated store "${store.name}"`, req.storeId);
   res.json({ store });
 });
 

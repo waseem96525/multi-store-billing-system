@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -135,6 +136,7 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
          WHERE p.id = ?`
       )
       .get(req.storeId, info.lastInsertRowid);
+    logActivity(req.user, 'product_created', `Created "${product.name}" (sku ${product.sku || '-'})`, req.storeId);
     res.status(201).json({ product });
   } catch (e) {
     db.exec('ROLLBACK');
@@ -217,6 +219,7 @@ router.put('/:id', authorize('admin', 'inventory'), (req, res) => {
          WHERE p.id = ?`
       )
       .get(req.storeId, id);
+    logActivity(req.user, 'product_updated', `Updated "${product.name}"`, req.storeId);
     res.json({ product });
   } catch (e) {
     db.exec('ROLLBACK');
@@ -232,6 +235,7 @@ router.delete('/:id', authorize('admin', 'inventory'), (req, res) => {
       const info = db.prepare('DELETE FROM products WHERE id = ?').run(req.params.id);
       db.exec('COMMIT');
       if (info.changes === 0) return res.status(404).json({ error: 'Product not found' });
+      logActivity(req.user, 'product_deleted', `Deleted product id ${req.params.id}`, req.storeId);
       res.json({ success: true });
     } catch (e) {
       db.exec('ROLLBACK');
@@ -256,6 +260,7 @@ router.post('/categories', authorize('admin', 'inventory'), (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
     const info = db.prepare('INSERT INTO categories (name) VALUES (?)').run(name);
+    logActivity(req.user, 'category_created', `Created category "${name}"`, req.storeId);
     res.status(201).json({ category: { id: info.lastInsertRowid, name } });
   } catch (e) {
     res.status(409).json({ error: 'Category already exists' });
@@ -269,6 +274,7 @@ router.put('/categories/:id', authorize('admin', 'inventory'), (req, res) => {
     .prepare('UPDATE categories SET name = ? WHERE id = ?')
     .run(name, req.params.id);
   if (info.changes === 0) return res.status(404).json({ error: 'Category not found' });
+  logActivity(req.user, 'category_updated', `Renamed category id ${req.params.id} to "${name}"`, req.storeId);
   res.json({ category: { id: Number(req.params.id), name } });
 });
 
@@ -282,6 +288,7 @@ router.delete('/categories/:id', authorize('admin', 'inventory'), (req, res) => 
       const info = db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
       db.exec('COMMIT');
       if (info.changes === 0) return res.status(404).json({ error: 'Category not found' });
+      logActivity(req.user, 'category_deleted', `Deleted category id ${req.params.id}`, req.storeId);
       res.json({ success: true });
     } catch (e) {
       db.exec('ROLLBACK');

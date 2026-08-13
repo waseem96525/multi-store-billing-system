@@ -10,6 +10,7 @@ import {
   deleteCategory,
 } from '../api/products';
 import { printLabels } from '../utils/print';
+import { exportCsv } from '../api/export';
 
 const EMPTY = {
   name: '',
@@ -210,6 +211,13 @@ export default function Inventory() {
             onClick={openLabels}
           >
             Print Labels
+          </button>
+          <button
+            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+            onClick={() => exportCsv('products').catch((e) => setError(e.response?.data?.error || 'Export failed'))}
+            title="Download inventory as CSV"
+          >
+            Export CSV
           </button>
           <button
             className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700"

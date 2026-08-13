@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -167,6 +168,12 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     }
     db.exec('COMMIT');
     const ret = db.prepare('SELECT * FROM returns WHERE id = ?').get(returnId);
+    logActivity(
+      req.user,
+      'return',
+      `Return #${returnId} on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}`,
+      req.storeId
+    );
     res.status(201).json({ return: ret });
   } catch (e) {
     db.exec('ROLLBACK');

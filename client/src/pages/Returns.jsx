@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listInvoices } from '../api/invoices';
 import { listReturns, getInvoiceReturnItems, createReturn } from '../api/returns';
+import { exportCsv } from '../api/export';
 
 export default function Returns() {
   const [invoices, setInvoices] = useState([]);
@@ -80,7 +81,16 @@ export default function Returns() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-slate-800">Returns & Refunds</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-slate-800">Returns & Refunds</h1>
+        <button
+          className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+          onClick={() => exportCsv('returns').catch((e) => setError(e.response?.data?.error || 'Export failed'))}
+          title="Download returns as CSV"
+        >
+          Export CSV
+        </button>
+      </div>
       {error && <div className="text-red-600 text-sm">{error}</div>}
       {msg && <div className="text-green-600 text-sm">{msg}</div>}
 

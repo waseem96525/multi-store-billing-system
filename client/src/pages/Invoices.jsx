@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listInvoices, getInvoice } from '../api/invoices';
 import { printReceipt } from '../utils/print';
+import { exportCsv } from '../api/export';
 
 export default function Invoices() {
   const [invoices, setInvoices] = useState([]);
@@ -41,12 +42,21 @@ export default function Invoices() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-slate-800">Sales / Invoices</h1>
-        <input
-          className="border rounded px-3 py-2 w-full sm:w-64"
-          placeholder="Search invoice no..."
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            className="border rounded px-3 py-2 w-full sm:w-64"
+            placeholder="Search invoice no..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <button
+            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200 whitespace-nowrap"
+            onClick={() => exportCsv('invoices').catch((e) => setError(e.response?.data?.error || 'Export failed'))}
+            title="Download sales as CSV"
+          >
+            Export CSV
+          </button>
+        </div>
       </div>
 
       {error && <div className="text-red-600 text-sm">{error}</div>}

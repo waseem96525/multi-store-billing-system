@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -151,6 +152,12 @@ router.post('/', (req, res) => {
       );
     }
     db.exec('COMMIT');
+    logActivity(
+      req.user,
+      'sale',
+      `${invoiceNo} · ${processed.length} item(s) · ${payment_mode} · ₹${grandTotal.toFixed(2)}${status === 'credit' ? ' · CREDIT' : ''}`,
+      req.storeId
+    );
     res
       .status(201)
       .json({

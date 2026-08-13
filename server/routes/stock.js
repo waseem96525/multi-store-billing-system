@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -30,6 +31,12 @@ router.post('/adjust', authorize('admin', 'inventory'), (req, res) => {
     const stock = db
       .prepare('SELECT * FROM product_stock WHERE product_id = ? AND store_id = ?')
       .get(product_id, req.storeId);
+    logActivity(
+      req.user,
+      'stock_adjustment',
+      `"${product.name}" ${change > 0 ? '+' : ''}${change} ${product.unit || 'pcs'}${reason ? ` (${reason})` : ''} → ${stock ? stock.stock_qty : 0}`,
+      req.storeId
+    );
     res.status(201).json({ product: { ...product, stock_qty: stock ? stock.stock_qty : 0 } });
   } catch (e) {
     db.exec('ROLLBACK');

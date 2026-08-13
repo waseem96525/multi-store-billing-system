@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { listExpenses, createExpense, deleteExpense } from '../api/expenses';
+import { exportCsv } from '../api/export';
 
 const CATEGORIES = [
   'Rent',
@@ -63,9 +64,18 @@ export default function Expenses() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-slate-800">Expenses</h1>
-        <div className="bg-white rounded-lg shadow px-4 py-2 self-start">
-          <span className="text-sm text-slate-500">Total: </span>
-          <span className="font-bold text-slate-800">Rs {total.toFixed(2)}</span>
+        <div className="flex items-center gap-2 self-start">
+          <button
+            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+            onClick={() => exportCsv('expenses').catch((e) => setError(e.response?.data?.error || 'Export failed'))}
+            title="Download expenses as CSV"
+          >
+            Export CSV
+          </button>
+          <div className="bg-white rounded-lg shadow px-4 py-2">
+            <span className="text-sm text-slate-500">Total: </span>
+            <span className="font-bold text-slate-800">Rs {total.toFixed(2)}</span>
+          </div>
         </div>
       </div>
       {error && <div className="text-red-600 text-sm">{error}</div>}

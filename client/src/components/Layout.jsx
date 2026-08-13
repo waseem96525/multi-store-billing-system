@@ -4,11 +4,13 @@ import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '../store/slices/authSlice';
 import { setStores, setCurrentStore } from '../store/slices/storeSlice';
 import { listStores } from '../api/stores';
+import { getTheme, toggleTheme } from '../utils/theme';
 
 export default function Layout() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dark, setDark] = useState(getTheme() === 'dark');
   const user = useSelector((s) => s.auth.user);
   const stores = useSelector((s) => s.store.stores);
   const currentStoreId = useSelector((s) => s.store.currentStoreId);
@@ -25,6 +27,21 @@ export default function Layout() {
     dispatch(logout());
     navigate('/login');
   };
+
+  const handleThemeToggle = () => {
+    const next = toggleTheme();
+    setDark(next === 'dark');
+  };
+
+  const themeButton = (
+    <button
+      onClick={handleThemeToggle}
+      className="mt-2 w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs"
+      title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {dark ? '☀️ Light mode' : '🌙 Dark mode'}
+    </button>
+  );
 
   const navClass = ({ isActive }) =>
     `block px-3 py-2 rounded-md text-sm font-medium ${
@@ -92,6 +109,9 @@ export default function Layout() {
             <NavLink to="/reports" className={navClass} onClick={() => setMenuOpen(false)}>
               Reports & Charts
             </NavLink>
+            <NavLink to="/activity" className={navClass} onClick={() => setMenuOpen(false)}>
+              Activity Log
+            </NavLink>
             <NavLink to="/settings" className={navClass} onClick={() => setMenuOpen(false)}>
               Shop Settings
             </NavLink>
@@ -107,6 +127,7 @@ export default function Layout() {
       <div className="p-3 border-t border-slate-700 text-sm">
         <div className="font-medium">{user?.name}</div>
         <div className="text-xs text-slate-400 capitalize">{user?.role}</div>
+        {themeButton}
         <button
           onClick={handleLogout}
           className="mt-2 w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs"
@@ -131,7 +152,13 @@ export default function Layout() {
           </svg>
         </button>
         <div className="font-bold">Retail POS</div>
-        <div className="w-8" />
+        <button
+          onClick={handleThemeToggle}
+          className="w-8 h-8 rounded hover:bg-slate-700"
+          title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {dark ? '☀️' : '🌙'}
+        </button>
       </header>
 
       {/* Mobile drawer */}

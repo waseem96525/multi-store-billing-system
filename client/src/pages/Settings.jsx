@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getCurrentStore, updateCurrentStore } from '../api/stores';
 import { useDispatch } from 'react-redux';
 import { setCurrentStoreInfo } from '../store/slices/storeSlice';
+import { downloadBackup } from '../api/backup';
 
 export default function Settings() {
   const dispatch = useDispatch();
@@ -103,6 +104,29 @@ export default function Settings() {
           Save Settings
         </button>
       </form>
+
+      <div className="bg-white rounded-lg shadow p-4 max-w-md">
+        <h2 className="font-semibold text-slate-700 mb-1">Database Backup</h2>
+        <p className="text-sm text-slate-500 mb-3">
+          Download a full snapshot of your database (products, sales, purchases, staff and settings).
+          Keep it safe — it can be restored later if anything goes wrong.
+        </p>
+        <button
+          onClick={async () => {
+            setError('');
+            setMsg('');
+            try {
+              await downloadBackup();
+              setMsg('Backup downloaded');
+            } catch (e) {
+              setError(e.response?.data?.error || 'Backup failed');
+            }
+          }}
+          className="w-full bg-slate-800 text-white py-2 rounded hover:bg-slate-700"
+        >
+          Download Backup (.db)
+        </button>
+      </div>
     </div>
   );
 }

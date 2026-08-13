@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -51,6 +52,12 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
       req.user.id
     );
   const expense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid);
+  logActivity(
+    req.user,
+    'expense',
+    `${category} · ₹${Number(amount).toFixed(2)}${note ? ` · ${note}` : ''}`,
+    req.storeId
+  );
   res.status(201).json({ expense });
 });
 
@@ -59,6 +66,7 @@ router.delete('/:id', authorize('admin'), (req, res) => {
     .prepare('DELETE FROM expenses WHERE id = ? AND store_id = ?')
     .run(req.params.id, req.storeId);
   if (info.changes === 0) return res.status(404).json({ error: 'Expense not found' });
+  logActivity(req.user, 'expense_deleted', `Deleted expense id ${req.params.id}`, req.storeId);
   res.json({ success: true });
 });
 

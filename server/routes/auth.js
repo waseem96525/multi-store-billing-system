@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { hashPassword, verifyPassword, signToken } = require('../utils/auth');
 const { authenticate, authorize } = require('../middleware/auth');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -21,6 +22,7 @@ router.post('/login', (req, res) => {
     role: user.role,
     store_id: user.store_id,
   });
+  logActivity(user, 'login', `${user.name} signed in`);
   res.json({
     token,
     user: {
@@ -61,6 +63,7 @@ router.post('/register', authenticate, authorize('admin'), (req, res) => {
   const info = db
     .prepare('INSERT INTO users (name, username, password_hash, role, store_id) VALUES (?,?,?,?,?)')
     .run(name, username, hashPassword(password), userRole, userStoreId);
+  logActivity(req.user, 'user_created', `Created user "${username}" (${userRole})`);
   res.status(201).json({ id: info.lastInsertRowid, name, username, role: userRole, store_id: userStoreId });
 });
 
@@ -96,6 +99,7 @@ router.patch('/users/:id', authenticate, authorize('admin'), (req, res) => {
     .prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`)
     .run(...params);
   if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
+  logActivity(req.user, 'user_updated', `Updated user id ${req.params.id}`, req.storeId);
   res.json({ success: true });
 });
 

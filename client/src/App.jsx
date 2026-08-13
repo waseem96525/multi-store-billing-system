@@ -10,6 +10,7 @@ import Purchases from './pages/Purchases';
 import Stock from './pages/Stock';
 import Users from './pages/Users';
 import Reports from './pages/Reports';
+import Activity from './pages/Activity';
 import Expenses from './pages/Expenses';
 import Returns from './pages/Returns';
 import Settings from './pages/Settings';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/stock" element={<Stock />} />
           <Route path="/users" element={<Users />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/activity" element={<Activity />} />
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/returns" element={<Returns />} />
           <Route path="/transfers" element={<Transfers />} />

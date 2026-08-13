@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
@@ -91,6 +92,12 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
       increment.run(p.product_id, to_store_id, p.qty);
     }
     db.exec('COMMIT');
+    logActivity(
+      req.user,
+      'transfer',
+      `Transfer #${transferId} · ${processed.length} item(s) · store ${req.storeId} → ${to_store_id}`,
+      req.storeId
+    );
     res.status(201).json({ transfer: { id: transferId, to_store_id, note, item_count: processed.length } });
   } catch (e) {
     db.exec('ROLLBACK');

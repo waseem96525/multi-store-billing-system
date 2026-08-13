@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { listSuppliers, createSupplier } from '../api/suppliers';
 import { listProducts } from '../api/products';
-import { listPurchases, createPurchase, getPurchase } from '../api/purchases';
+import { listPurchases, createPurchase, getPurchase, getPurchaseSuggestions } from '../api/purchases';
+import { exportCsv } from '../api/export';
 
 const EMPTY_LINE = { product_id: '', qty: 1, cost_price: 0 };
 
@@ -15,6 +16,8 @@ export default function Purchases() {
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const load = async () => {
     const [s, p, pu] = await Promise.all([listSuppliers(), listProducts(), listPurchases()]);
@@ -25,6 +28,12 @@ export default function Purchases() {
 
   useEffect(() => {
     load().catch((e) => setError(e.response?.data?.error || 'Load failed'));
+  }, []);
+
+  useEffect(() => {
+    getPurchaseSuggestions()
+      .then((d) => setSuggestions(d.suggestions || []))
+      .catch(() => {});
   }, []);
 
   const total = items.reduce(
@@ -39,22 +48,28 @@ export default function Purchases() {
   const addLine = () => setItems((prev) => [...prev, { ...EMPTY_LINE }]);
   const removeLine = (idx) => setItems((prev) => prev.filter((_, i) => i !== idx));
 
+  const applySuggestions = (list) => {
+    const lines = list.map((p) => ({
+      product_id: String(p.id),
+      qty: p.suggested_qty || Math.max(1, Math.ceil(Number(p.reorder_level) * 2 - Number(p.stock_qty))),
+      cost_price: Number(p.cost_price) || 0,
+    }));
+    setItems(lines);
+    setShowSuggestions(false);
+    setMsg(`Loaded ${lines.length} reorder suggestion(s) — adjust quantities and record the purchase`);
+  };
+
   const handleLoadRestock = async () => {
     setError('');
+    setMsg('');
     try {
-      const data = await listProducts({ low_stock: '1' });
-      const low = data.products || [];
+      const data = await getPurchaseSuggestions();
+      const low = data.suggestions || [];
       if (low.length === 0) {
         setMsg('No products are below their reorder level');
         return;
       }
-      const lines = low.map((p) => ({
-        product_id: String(p.id),
-        qty: Math.max(1, Math.ceil(Number(p.reorder_level) * 2 - Number(p.stock_qty))),
-        cost_price: Number(p.cost_price) || 0,
-      }));
-      setItems(lines);
-      setMsg(`Loaded ${lines.length} low-stock product(s) — adjust quantities and record the purchase`);
+      applySuggestions(low);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load low stock items');
     }
@@ -106,9 +121,74 @@ export default function Purchases() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-slate-800">Purchases / Stock In</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-slate-800">Purchases / Stock In</h1>
+        <button
+          className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+          onClick={() => exportCsv('purchases').catch((e) => setError(e.response?.data?.error || 'Export failed'))}
+          title="Download purchases as CSV"
+        >
+          Export CSV
+        </button>
+      </div>
       {error && <div className="text-red-600 text-sm">{error}</div>}
       {msg && <div className="text-green-600 text-sm">{msg}</div>}
+
+      {suggestions.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm text-amber-800">
+              <span className="font-bold">{suggestions.length}</span> product(s) below reorder level —
+              estimated cost{' '}
+              <span className="font-bold">
+                ₹{suggestions.reduce((s, p) => s + Number(p.est_cost), 0).toFixed(2)}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowSuggestions((v) => !v)}
+                className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700 hover:bg-amber-200"
+              >
+                {showSuggestions ? 'Hide list' : 'Show list'}
+              </button>
+              <button
+                type="button"
+                onClick={() => applySuggestions(suggestions)}
+                className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700 hover:bg-amber-200"
+              >
+                Use in purchase list
+              </button>
+            </div>
+          </div>
+          {showSuggestions && (
+            <div className="mt-2 max-h-56 overflow-auto rounded bg-white/60 dark:bg-slate-900/50">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-amber-900 border-b">
+                    <th className="p-1.5">Product</th>
+                    <th className="p-1.5 text-right">Stock</th>
+                    <th className="p-1.5 text-right">Reorder</th>
+                    <th className="p-1.5 text-right">Suggested qty</th>
+                    <th className="p-1.5 text-right">Est. cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {suggestions.map((p) => (
+                    <tr key={p.id} className="border-b text-amber-900">
+                      <td className="p-1.5">{p.name}</td>
+                      <td className="p-1.5 text-right">{p.stock_qty}</td>
+                      <td className="p-1.5 text-right">{p.reorder_level}</td>
+                      <td className="p-1.5 text-right font-semibold">{p.suggested_qty}</td>
+                      <td className="p-1.5 text-right">₹{p.est_cost}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Create purchase */}

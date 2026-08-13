@@ -2,10 +2,40 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const { logActivity } = require('../utils/activity');
 
 const router = express.Router();
 
 router.use(authenticate, attachStore);
+
+// Auto-reorder suggestions: products below/at their reorder level for this store,
+// with a suggested order quantity and estimated cost.
+router.get('/suggestions', (req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT p.id, p.name, p.sku, p.barcode, p.cost_price, p.selling_price, p.unit,
+              ps.stock_qty, ps.reorder_level, c.name AS category_name
+       FROM products p
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE ps.stock_qty <= ps.reorder_level
+       ORDER BY ps.stock_qty - ps.reorder_level ASC, p.name ASC`
+    )
+    .all(req.storeId);
+  const suggestions = rows.map((p) => {
+    const suggested_qty = Math.max(1, Math.ceil(p.reorder_level * 2 - p.stock_qty));
+    return {
+      ...p,
+      suggested_qty,
+      est_cost: Number((p.cost_price || 0) * suggested_qty).toFixed(2),
+    };
+  });
+  const total_est_cost = suggestions.reduce(
+    (sum, s) => sum + Number(s.est_cost),
+    0
+  );
+  res.json({ suggestions, count: suggestions.length, total_est_cost });
+});
 
 router.post('/', authorize('admin', 'inventory'), (req, res) => {
   const { supplier_id, invoice_ref, items } = req.body || {};
@@ -53,6 +83,12 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     }
     if (getSupplier.get(supplier_id)) updateSupplier.run(total, supplier_id);
     db.exec('COMMIT');
+    logActivity(
+      req.user,
+      'purchase',
+      `Purchase #${purchaseId} · ${processed.length} item(s) · ₹${total.toFixed(2)}`,
+      req.storeId
+    );
     res.status(201).json({
       purchase: { id: purchaseId, supplier_id, invoice_ref, total_amount: total },
     });
