@@ -35,10 +35,10 @@ router.get('/', (req, res) => {
   const topProducts = db
     .prepare(
       `SELECT p.name, SUM(ii.qty) AS qty_sold, SUM(ii.line_total) AS revenue
-       FROM invoice_items ii
-       JOIN invoices i ON i.id = ii.invoice_id
+       FROM invoices i
+       JOIN invoice_items ii ON ii.invoice_id = i.id
        JOIN products p ON p.id = ii.product_id
-       WHERE i.store_id = ?
+       WHERE i.store_id = ? AND i.created_at >= datetime('now', '-30 days')
        GROUP BY p.id ORDER BY revenue DESC LIMIT 5`
     )
     .all(req.storeId);

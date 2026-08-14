@@ -48,18 +48,22 @@ router.get('/barcode/:code', (req, res) => {
   res.json({ product });
 });
 
-// Top-selling products for the POS "Quick Add" shelf (scoped to current store)
+// Top-selling products for the POS "Quick Add" shelf (scoped to current store,
+// based on sales in the last 30 days so it stays fast as history grows)
 router.get('/frequent', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 12, 50);
   const rows = db
     .prepare(
-      `SELECT p.*, c.name AS category_name, ps.stock_qty, ps.reorder_level,
+      `SELECT p.id, p.name, p.sku, p.barcode, p.unit, p.cost_price, p.selling_price,
+              p.tax_percent, p.mrp, p.category_id, c.name AS category_name,
+              ps.stock_qty, ps.reorder_level,
               COALESCE(SUM(ii.qty), 0) AS sold_qty
-       FROM products p
-       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
-       LEFT JOIN invoice_items ii ON ii.product_id = p.id
-       LEFT JOIN invoices i ON i.id = ii.invoice_id AND i.store_id = ?
+       FROM invoices i
+       JOIN invoice_items ii ON ii.invoice_id = i.id
+       JOIN products p ON p.id = ii.product_id
        LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
+       WHERE i.store_id = ? AND i.created_at >= datetime('now', '-30 days')
        GROUP BY p.id
        ORDER BY sold_qty DESC, p.name ASC
        LIMIT ?`

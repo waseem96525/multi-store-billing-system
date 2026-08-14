@@ -227,6 +227,41 @@ CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at
 CREATE INDEX IF NOT EXISTS idx_activity_logs_action ON activity_logs(action);
 `);
 
+// Performance indexes - most queries filter by store_id and join on these
+// columns; without them every request does a full table scan and the app
+// slows down as data grows.
+db.exec(`
+DROP INDEX IF EXISTS idx_invoice_items_invoice;
+CREATE INDEX IF NOT EXISTS idx_invoice_items_cover ON invoice_items(invoice_id, qty, cost_price, line_total);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_product ON invoice_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_store_id ON invoices(store_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_store_created ON invoices(store_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_invoices_created_by ON invoices(created_by);
+CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id);
+CREATE INDEX IF NOT EXISTS idx_product_stock_store ON product_stock(store_id);
+CREATE INDEX IF NOT EXISTS idx_purchases_store ON purchases(store_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
+CREATE INDEX IF NOT EXISTS idx_purchase_items_product ON purchase_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_held_bills_store ON held_bills(store_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_store ON expenses(store_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_store_date ON expenses(store_id, expense_date);
+CREATE INDEX IF NOT EXISTS idx_returns_store ON returns(store_id);
+CREATE INDEX IF NOT EXISTS idx_returns_invoice ON returns(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_return_items_return ON return_items(return_id);
+CREATE INDEX IF NOT EXISTS idx_return_items_product ON return_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_stock_adjustments_store ON stock_adjustments(store_id);
+CREATE INDEX IF NOT EXISTS idx_stock_adjustments_product ON stock_adjustments(product_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transfers_from ON stock_transfers(from_store_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transfers_to ON stock_transfers(to_store_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transfer_items_transfer ON stock_transfer_items(transfer_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_user ON activity_logs(user_id);
+`);
+
+// Keep hot data in memory so report/aggregate queries don't hit the disk.
+try { db.exec('PRAGMA cache_size = -65536;'); } catch (e) { /* remote may not support */ }
+try { db.exec('PRAGMA temp_store = MEMORY;'); } catch (e) { /* ignore */ }
+try { db.exec('PRAGMA mmap_size = 268435456;'); } catch (e) { /* ignore */ }
+
 // Store-related migrations
 const ensureColumn = (table, column, ddl) => {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
