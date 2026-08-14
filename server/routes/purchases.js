@@ -44,58 +44,94 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     return res.status(400).json({ error: 'items required' });
   }
 
-  db.exec('BEGIN');
-  try {
-    // NOTE: prepare statements after BEGIN - required for remote (Hrana/Turso) transactions
-    const getProduct = db.prepare('SELECT * FROM products WHERE id = ?');
-    const insertPurchase = db.prepare(
-      'INSERT INTO purchases (supplier_id, invoice_ref, total_amount, created_by, store_id) VALUES (?,?,?,?,?)'
-    );
-    const insertItem = db.prepare(
-      'INSERT INTO purchase_items (purchase_id, product_id, qty, cost_price) VALUES (?,?,?,?)'
-    );
-    const updateStock = db.prepare(
-      `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
-       VALUES (?,?,?,0)
-       ON CONFLICT(product_id, store_id) DO UPDATE SET stock_qty = stock_qty + excluded.stock_qty`
-    );
-    const updateSupplier = db.prepare(
-      'UPDATE suppliers SET outstanding_balance = outstanding_balance + ? WHERE id = ?'
-    );
-    const getSupplier = db.prepare('SELECT * FROM suppliers WHERE id = ?');
+  // Batch reads into a few round trips and do all writes in one transaction
+  // script - keeps remote (Turso) checkout fast.
+  const ids = [
+    ...new Set(
+      items.map((it) => Number(it.product_id)).filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+  if (ids.length === 0) return res.status(400).json({ error: 'Invalid items' });
+  const ph = ids.map(() => '?').join(',');
 
-    let total = 0;
-    const processed = [];
-    for (const it of items) {
-      const product = getProduct.get(it.product_id);
-      if (!product) throw new Error('Product not found: ' + it.product_id);
-      const qty = Number(it.qty);
-      if (!(qty > 0)) throw new Error('Invalid quantity for ' + product.name);
-      const cost = Number(it.cost_price ?? product.cost_price);
-      total += cost * qty;
-      processed.push({ product_id: product.id, qty, cost_price: cost });
-      updateStock.run(product.id, req.storeId, qty);
-    }
-    const info = insertPurchase.run(supplier_id, invoice_ref || null, total, req.user.id, req.storeId);
-    const purchaseId = info.lastInsertRowid;
-    for (const p of processed) {
-      insertItem.run(purchaseId, p.product_id, p.qty, p.cost_price);
-    }
-    if (getSupplier.get(supplier_id)) updateSupplier.run(total, supplier_id);
-    db.exec('COMMIT');
-    logActivity(
-      req.user,
-      'purchase',
-      `Purchase #${purchaseId} · ${processed.length} item(s) · ₹${total.toFixed(2)}`,
-      req.storeId
-    );
-    res.status(201).json({
-      purchase: { id: purchaseId, supplier_id, invoice_ref, total_amount: total },
-    });
+  let products, supplier;
+  try {
+    products = db
+      .prepare(`SELECT * FROM products WHERE id IN (${ph})`)
+      .all(...ids);
+    supplier = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(Number(supplier_id));
   } catch (e) {
-    db.exec('ROLLBACK');
-    res.status(400).json({ error: e.message });
+    return res.status(400).json({ error: e.message });
   }
+  if (!supplier) return res.status(400).json({ error: 'Supplier not found' });
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
+  let total = 0;
+  const processed = [];
+  for (const it of items) {
+    const pid = Number(it.product_id);
+    const product = productMap.get(pid);
+    if (!product) return res.status(400).json({ error: 'Product not found: ' + pid });
+    const qty = Number(it.qty);
+    if (!(qty > 0)) return res.status(400).json({ error: 'Invalid quantity for ' + product.name });
+    const cost = Number(it.cost_price ?? product.cost_price);
+    total += cost * qty;
+    processed.push({ product_id: pid, qty, cost_price: cost });
+  }
+
+  const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const num = (n) => (Number.isFinite(Number(n)) ? String(Number(n)) : '0');
+
+  const stockAgg = new Map();
+  for (const p of processed) stockAgg.set(p.product_id, (stockAgg.get(p.product_id) || 0) + p.qty);
+  const ensureStock =
+    `INSERT OR IGNORE INTO product_stock (product_id, store_id, stock_qty, reorder_level) VALUES ` +
+    [...stockAgg.keys()].map((pid) => `(${pid}, ${req.storeId}, 0, 0)`).join(', ') + ';';
+  const stockUpdate =
+    `UPDATE product_stock SET stock_qty = stock_qty + CASE product_id ` +
+    [...stockAgg].map(([pid, qty]) => `WHEN ${pid} THEN ${num(qty)}`).join(' ') +
+    ` END WHERE store_id = ${req.storeId} AND product_id IN (${[...stockAgg.keys()].join(',')});`;
+
+  const itemsInsert =
+    `INSERT INTO purchase_items (purchase_id, product_id, qty, cost_price)
+     SELECT ` +
+    processed
+      .map((p) => `?purchaseId?, ${p.product_id}, ${num(p.qty)}, ${num(p.cost_price)}`)
+      .join(' UNION ALL SELECT ') +
+    ';';
+
+  const purchaseInsert =
+    `INSERT INTO purchases (supplier_id, invoice_ref, total_amount, created_by, store_id)
+     VALUES (${Number(supplier_id)}, ${invoice_ref ? esc(invoice_ref) : 'NULL'}, ${num(total)}, ${req.user.id}, ${req.storeId});`;
+
+  // Writes in 3 round trips: BEGIN+insert, read row id, then rest+COMMIT
+  let purchaseId;
+  try {
+    db.exec('BEGIN;\n' + purchaseInsert);
+    purchaseId = db.prepare('SELECT last_insert_rowid() AS id').get().id;
+    db.exec(
+      [
+        ensureStock,
+        stockUpdate,
+        itemsInsert.replace(/\?purchaseId\?/g, purchaseId),
+        `UPDATE suppliers SET outstanding_balance = outstanding_balance + ${num(total)} WHERE id = ${Number(supplier_id)};`,
+        'COMMIT;',
+      ].join('\n')
+    );
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (er) { /* ignore */ }
+    return res.status(400).json({ error: e.message });
+  }
+
+  logActivity(
+    req.user,
+    'purchase',
+    `Purchase #${purchaseId} · ${processed.length} item(s) · ₹${total.toFixed(2)}`,
+    req.storeId
+  );
+  res.status(201).json({
+    purchase: { id: purchaseId, supplier_id, invoice_ref, total_amount: total },
+  });
 });
 
 router.get('/', (req, res) => {

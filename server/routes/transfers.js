@@ -42,67 +42,104 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'items required' });
   }
-  const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(to_store_id);
+  const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(Number(to_store_id));
   if (!store) return res.status(404).json({ error: 'Destination store not found' });
 
-  db.exec('BEGIN');
+  // Batch reads and do every write in one transaction script (remote Turso friendly)
+  const ids = [
+    ...new Set(
+      items.map((it) => Number(it.product_id)).filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+  if (ids.length === 0) return res.status(400).json({ error: 'Invalid items' });
+  const ph = ids.map(() => '?').join(',');
+
+  let products, stockRows;
   try {
-    // NOTE: prepare statements after BEGIN - required for remote (Hrana/Turso) transactions
-    const getStock = db.prepare(
-      'SELECT stock_qty FROM product_stock WHERE product_id = ? AND store_id = ?'
-    );
-    const getProduct = db.prepare('SELECT * FROM products WHERE id = ?');
-    const decrement = db.prepare(
-      'UPDATE product_stock SET stock_qty = stock_qty - ? WHERE product_id = ? AND store_id = ?'
-    );
-    const increment = db.prepare(
-      `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
-       VALUES (?,?,?,0)
-       ON CONFLICT(product_id, store_id) DO UPDATE SET
-         stock_qty = stock_qty + excluded.stock_qty`
-    );
-    const insertTransfer = db.prepare(
-      'INSERT INTO stock_transfers (from_store_id, to_store_id, note, created_by) VALUES (?,?,?,?)'
-    );
-    const insertItem = db.prepare(
-      'INSERT INTO stock_transfer_items (transfer_id, product_id, qty) VALUES (?,?,?)'
-    );
-
-    const processed = [];
-    for (const it of items) {
-      const product = getProduct.get(it.product_id);
-      if (!product) throw new Error('Product not found: ' + it.product_id);
-      const qty = Number(it.qty);
-      if (!(qty > 0)) throw new Error('Invalid quantity for ' + product.name);
-      const stockRow = getStock.get(it.product_id, req.storeId);
-      const available = stockRow ? stockRow.stock_qty : 0;
-      if (available < qty) {
-        throw new Error(
-          `Insufficient stock for ${product.name} (${available} available)`
-        );
-      }
-      processed.push({ product_id: product.id, qty });
-    }
-
-    const info = insertTransfer.run(req.storeId, to_store_id, note || null, req.user.id);
-    const transferId = info.lastInsertRowid;
-    for (const p of processed) {
-      insertItem.run(transferId, p.product_id, p.qty);
-      decrement.run(p.qty, p.product_id, req.storeId);
-      increment.run(p.product_id, to_store_id, p.qty);
-    }
-    db.exec('COMMIT');
-    logActivity(
-      req.user,
-      'transfer',
-      `Transfer #${transferId} · ${processed.length} item(s) · store ${req.storeId} → ${to_store_id}`,
-      req.storeId
-    );
-    res.status(201).json({ transfer: { id: transferId, to_store_id, note, item_count: processed.length } });
+    products = db
+      .prepare(`SELECT * FROM products WHERE id IN (${ph})`)
+      .all(...ids);
+    stockRows = db
+      .prepare(
+        `SELECT product_id, stock_qty FROM product_stock WHERE store_id = ? AND product_id IN (${ph})`
+      )
+      .all(req.storeId, ...ids);
   } catch (e) {
-    db.exec('ROLLBACK');
-    res.status(400).json({ error: e.message });
+    return res.status(400).json({ error: e.message });
   }
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const stockMap = new Map(stockRows.map((r) => [r.product_id, r.stock_qty]));
+
+  const processed = [];
+  for (const it of items) {
+    const pid = Number(it.product_id);
+    const product = productMap.get(pid);
+    if (!product) return res.status(400).json({ error: 'Product not found: ' + pid });
+    const qty = Number(it.qty);
+    if (!(qty > 0)) return res.status(400).json({ error: 'Invalid quantity for ' + product.name });
+    const available = stockMap.get(pid) || 0;
+    if (available < qty) {
+      return res.status(400).json({ error: `Insufficient stock for ${product.name} (${available} available)` });
+    }
+    processed.push({ product_id: pid, qty });
+  }
+
+  const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const num = (n) => (Number.isFinite(Number(n)) ? String(Number(n)) : '0');
+
+  const outAgg = new Map();
+  for (const p of processed) outAgg.set(p.product_id, (outAgg.get(p.product_id) || 0) + p.qty);
+  const outIds = [...outAgg.keys()].join(',');
+  const decrement =
+    `UPDATE product_stock SET stock_qty = MAX(0, stock_qty - CASE product_id ` +
+    [...outAgg].map(([pid, qty]) => `WHEN ${pid} THEN ${num(qty)}`).join(' ') +
+    ` END) WHERE store_id = ${req.storeId} AND product_id IN (${outIds});`;
+  const ensureIn =
+    `INSERT OR IGNORE INTO product_stock (product_id, store_id, stock_qty, reorder_level) VALUES ` +
+    outAgg.keys().map((pid) => `(${pid}, ${Number(to_store_id)}, 0, 0)`).join(', ') + ';';
+  const increment =
+    `UPDATE product_stock SET stock_qty = stock_qty + CASE product_id ` +
+    [...outAgg].map(([pid, qty]) => `WHEN ${pid} THEN ${num(qty)}`).join(' ') +
+    ` END WHERE store_id = ${Number(to_store_id)} AND product_id IN (${outIds});`;
+
+  const itemsInsert =
+    `INSERT INTO stock_transfer_items (transfer_id, product_id, qty)
+     SELECT ` +
+    processed
+      .map((p) => `?transferId?, ${p.product_id}, ${num(p.qty)}`)
+      .join(' UNION ALL SELECT ') +
+    ';';
+
+  const transferInsert =
+    `INSERT INTO stock_transfers (from_store_id, to_store_id, note, created_by)
+     VALUES (${req.storeId}, ${Number(to_store_id)}, ${note ? esc(note) : 'NULL'}, ${req.user.id});`;
+
+  // Writes in 3 round trips: BEGIN+insert, read row id, then rest+COMMIT
+  let transferId;
+  try {
+    db.exec('BEGIN;\n' + transferInsert);
+    transferId = db.prepare('SELECT last_insert_rowid() AS id').get().id;
+    db.exec(
+      [
+        decrement,
+        ensureIn,
+        increment,
+        itemsInsert.replace(/\?transferId\?/g, transferId),
+        'COMMIT;',
+      ].join('\n')
+    );
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (er) { /* ignore */ }
+    return res.status(400).json({ error: e.message });
+  }
+
+  logActivity(
+    req.user,
+    'transfer',
+    `Transfer #${transferId} · ${processed.length} item(s) · store ${req.storeId} → ${to_store_id}`,
+    req.storeId
+  );
+  res.status(201).json({ transfer: { id: transferId, to_store_id, note, item_count: processed.length } });
 });
 
 module.exports = router;

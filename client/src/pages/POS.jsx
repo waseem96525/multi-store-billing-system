@@ -4,7 +4,6 @@ import { listProducts, getProductByBarcode, listFrequentProducts } from '../api/
 import { listCustomers, createCustomer } from '../api/customers';
 import {
   createInvoice,
-  getInvoice,
   holdInvoice,
   listHeldInvoices,
   retrieveHeldInvoice,
@@ -390,7 +389,7 @@ export default function POS() {
         due_date: dueDate,
       };
       const res = await createInvoice(payload);
-      const detail = await getInvoice(res.invoice.invoiceId);
+      const detail = res.receipt;
       setReceipt(detail);
       dispatch(clearCart());
       setShowCart(false);

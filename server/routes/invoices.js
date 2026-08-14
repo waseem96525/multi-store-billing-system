@@ -8,13 +8,6 @@ const router = express.Router();
 
 router.use(authenticate, attachStore);
 
-function nextInvoiceNo() {
-  const last = db.prepare('SELECT invoice_no FROM invoices ORDER BY id DESC LIMIT 1').get();
-  if (!last) return 'INV-0001';
-  const num = parseInt(String(last.invoice_no).replace(/\D/g, ''), 10) || 0;
-  return 'INV-' + String(num + 1).padStart(4, '0');
-}
-
 // ---- Held bills (park a cart and resume later) ----
 router.post('/hold', (req, res) => {
   const { payload, label } = req.body || {};
@@ -66,114 +59,170 @@ router.post('/', (req, res) => {
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'items required' });
   }
+  if (!['cash', 'card', 'upi'].includes(payment_mode)) {
+    return res.status(400).json({ error: 'Invalid payment mode' });
+  }
+  if (!['paid', 'credit'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  if (due_date && !/^\d{4}-\d{2}-\d{2}$/.test(String(due_date))) {
+    return res.status(400).json({ error: 'Invalid due date' });
+  }
 
-  db.exec('BEGIN');
+  // Keep the number of remote (Turso) round trips small: all reads go into a
+  // few queries, and every write happens inside ONE transaction script.
+  // A 5-item bill used to take ~25 sequential round trips (~10s); now ~6.
+  const ids = [
+    ...new Set(
+      items.map((it) => Number(it.product_id)).filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+  if (ids.length === 0) return res.status(400).json({ error: 'Invalid items' });
+  const ph = ids.map(() => '?').join(',');
+
+  // All reads in as few round trips as possible (products + stock in one join)
+  let rows, store, last;
   try {
-    // NOTE: prepare statements after BEGIN - required for remote (Hrana/Turso) transactions
-    const getStock = db.prepare(
-      'SELECT stock_qty FROM product_stock WHERE product_id = ? AND store_id = ?'
-    );
-    const getProduct = db.prepare('SELECT * FROM products WHERE id = ?');
-    const updateStock = db.prepare(
-      'UPDATE product_stock SET stock_qty = stock_qty - ? WHERE product_id = ? AND store_id = ?'
-    );
-    const insertInvoice = db.prepare(
-      `INSERT INTO invoices
-       (invoice_no, customer_id, subtotal, discount, tax_total, grand_total, payment_mode, created_by, amount_paid, status, due_date, store_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-    );
-    const insertItem = db.prepare(
-      `INSERT INTO invoice_items
-       (invoice_id, product_id, qty, unit_price, discount, tax_percent, tax_amount, line_total, cost_price)
-       VALUES (?,?,?,?,?,?,?,?,?)`
-    );
+    rows = db
+      .prepare(
+        `SELECT p.*, ps.stock_qty FROM products p
+         LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.store_id = ?
+         WHERE p.id IN (${ph})`
+      )
+      .all(req.storeId, ...ids);
+    store = db.prepare('SELECT * FROM stores WHERE id = ?').get(req.storeId);
+    last = db.prepare('SELECT invoice_no FROM invoices ORDER BY id DESC LIMIT 1').get();
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
 
-    let subtotal = 0;
-    let taxTotal = 0;
-    const processed = [];
-    for (const it of items) {
-      const product = getProduct.get(it.product_id);
-      if (!product) throw new Error('Product not found: ' + it.product_id);
-      const qty = Number(it.qty);
-      if (!(qty > 0)) throw new Error('Invalid quantity for ' + product.name);
-      const stockRow = getStock.get(it.product_id, req.storeId);
-      const available = stockRow ? stockRow.stock_qty : 0;
-      if (available < qty) {
-        throw new Error('Insufficient stock for ' + product.name);
-      }
-      const unitPrice = Number(it.unit_price ?? product.selling_price);
-      const lineDiscount = Number(it.discount ?? 0);
-      const lineTaxPct = Number(it.tax_percent ?? product.tax_percent);
-      const taxableAmt = unitPrice * qty - lineDiscount;
-      const taxAmount = taxableAmt * (lineTaxPct / 100);
-      const lineTotal = taxableAmt + taxAmount;
-      subtotal += unitPrice * qty;
-      taxTotal += taxAmount;
-      processed.push({
-        product_id: product.id,
-        qty,
-        unit_price: unitPrice,
-        discount: lineDiscount,
-        tax_percent: lineTaxPct,
-        tax_amount: taxAmount,
-        line_total: lineTotal,
-        cost_price: product.cost_price || 0,
-      });
-      updateStock.run(qty, product.id, req.storeId);
+  const productMap = new Map(rows.map((p) => [p.id, p]));
+  const stockMap = new Map(rows.map((p) => [p.id, p.stock_qty]));
+  const lastNum = last ? parseInt(String(last.invoice_no).replace(/\D/g, ''), 10) || 0 : 0;
+  const invoiceNo = 'INV-' + String(lastNum + 1).padStart(4, '0');
+
+  let subtotal = 0;
+  let taxTotal = 0;
+  const processed = [];
+  for (const it of items) {
+    const pid = Number(it.product_id);
+    const product = productMap.get(pid);
+    if (!product) return res.status(400).json({ error: 'Product not found: ' + pid });
+    const qty = Number(it.qty);
+    if (!(qty > 0)) return res.status(400).json({ error: 'Invalid quantity for ' + product.name });
+    if ((stockMap.get(pid) || 0) < qty) {
+      return res.status(400).json({ error: 'Insufficient stock for ' + product.name });
     }
-    const grandTotal = subtotal - Number(discount) + taxTotal;
-    const invoiceNo = nextInvoiceNo();
-    const info = insertInvoice.run(
+    const unitPrice = Number(it.unit_price ?? product.selling_price);
+    const lineDiscount = Number(it.discount ?? 0);
+    const lineTaxPct = Number(it.tax_percent ?? product.tax_percent);
+    const taxableAmt = unitPrice * qty - lineDiscount;
+    const taxAmount = taxableAmt * (lineTaxPct / 100);
+    const lineTotal = taxableAmt + taxAmount;
+    subtotal += unitPrice * qty;
+    taxTotal += taxAmount;
+    processed.push({
+      product_id: pid,
+      qty,
+      unit_price: unitPrice,
+      discount: lineDiscount,
+      tax_percent: lineTaxPct,
+      tax_amount: taxAmount,
+      line_total: lineTotal,
+      cost_price: product.cost_price || 0,
+    });
+  }
+  const grandTotal = subtotal - Number(discount) + taxTotal;
+  const cid = customer_id ? Number(customer_id) : null;
+  const amtPaid = Number(amount_paid) || 0;
+  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const num = (n) => (Number.isFinite(Number(n)) ? String(Number(n)) : '0');
+
+  // Aggregate stock deductions per product (one row per product in the cart)
+  const stockAgg = new Map();
+  for (const p of processed) stockAgg.set(p.product_id, (stockAgg.get(p.product_id) || 0) + p.qty);
+  const stockUpdate =
+    `UPDATE product_stock SET stock_qty = MAX(0, stock_qty - CASE product_id ` +
+    [...stockAgg].map(([pid, qty]) => `WHEN ${pid} THEN ${num(qty)}`).join(' ') +
+    ` END) WHERE store_id = ${req.storeId} AND product_id IN (${[...stockAgg.keys()].join(',')});`;
+
+  // All items in one INSERT. last_insert_rowid() is NOT usable across UNION
+  // ALL rows (it changes as rows are inserted), so the invoice id is fetched
+  // in JS first and embedded as a literal.
+  const itemsInsert =
+    `INSERT INTO invoice_items (invoice_id, product_id, qty, unit_price, discount, tax_percent, tax_amount, line_total, cost_price)
+     SELECT ` +
+    processed
+      .map(
+        (p) =>
+          `${'?invoiceId?'}, ${p.product_id}, ${num(p.qty)}, ${num(p.unit_price)}, ${num(p.discount)}, ${num(p.tax_percent)}, ${num(p.tax_amount)}, ${num(p.line_total)}, ${num(p.cost_price)}`
+      )
+      .join(' UNION ALL SELECT ') +
+    ';';
+
+  const invoiceInsert =
+    `INSERT INTO invoices
+       (invoice_no, customer_id, subtotal, discount, tax_total, grand_total, payment_mode, created_by, amount_paid, status, due_date, store_id, created_at)
+     VALUES (${esc(invoiceNo)}, ${cid === null ? 'NULL' : cid}, ${num(subtotal)}, ${num(discount)}, ${num(taxTotal)}, ${num(grandTotal)}, ${esc(payment_mode)}, ${req.user.id}, ${num(amtPaid)}, ${esc(status)}, ${due_date ? esc(due_date) : 'NULL'}, ${req.storeId}, ${esc(now)});`;
+
+  // Writes in 3 round trips: BEGIN+invoice, read row id, then stock+items+COMMIT
+  let invoiceId;
+  try {
+    db.exec('BEGIN;\n' + invoiceInsert);
+    invoiceId = db.prepare('SELECT last_insert_rowid() AS id').get().id;
+    db.exec(
+      stockUpdate + '\n' + itemsInsert.replace(/\?invoiceId\?/g, invoiceId) + '\nCOMMIT;'
+    );
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (er) { /* ignore */ }
+    return res.status(400).json({ error: e.message });
+  }
+
+  logActivity(
+    req.user,
+    'sale',
+    `${invoiceNo} · ${processed.length} item(s) · ${payment_mode} · ₹${grandTotal.toFixed(2)}${status === 'credit' ? ' · CREDIT' : ''}`,
+    req.storeId
+  );
+
+  const receiptItems = processed.map((p) => {
+    const product = productMap.get(p.product_id);
+    return {
+      product_name: product ? product.name : 'Item',
+      qty: p.qty,
+      unit_price: p.unit_price,
+      discount: p.discount,
+      line_total: p.line_total,
+    };
+  });
+
+  res.status(201).json({
+    invoice: {
+      invoiceId,
       invoiceNo,
-      customer_id,
       subtotal,
-      Number(discount),
+      discount: Number(discount),
       taxTotal,
       grandTotal,
-      payment_mode,
-      req.user.id,
-      Number(amount_paid) || 0,
-      status,
-      due_date,
-      req.storeId
-    );
-    const invoiceId = info.lastInsertRowid;
-    for (const p of processed) {
-      insertItem.run(
-        invoiceId,
-        p.product_id,
-        p.qty,
-        p.unit_price,
-        p.discount,
-        p.tax_percent,
-        p.tax_amount,
-        p.line_total,
-        p.cost_price
-      );
-    }
-    db.exec('COMMIT');
-    logActivity(
-      req.user,
-      'sale',
-      `${invoiceNo} · ${processed.length} item(s) · ${payment_mode} · ₹${grandTotal.toFixed(2)}${status === 'credit' ? ' · CREDIT' : ''}`,
-      req.storeId
-    );
-    res
-      .status(201)
-      .json({
-        invoice: {
-          invoiceId,
-          invoiceNo,
-          subtotal,
-          discount: Number(discount),
-          taxTotal,
-          grandTotal,
-        },
-      });
-  } catch (e) {
-    db.exec('ROLLBACK');
-    res.status(400).json({ error: e.message });
-  }
+    },
+    // Full receipt inline so the client doesn't need another round trip
+    receipt: {
+      invoice: {
+        invoice_no: invoiceNo,
+        created_at: now,
+        status,
+        subtotal,
+        tax_total: taxTotal,
+        discount: Number(discount),
+        grand_total: grandTotal,
+        payment_mode,
+      },
+items: receiptItems,
+      cashier: { name: req.user.name },
+      store: store || null,
+    },
+  });
 });
 
 router.get('/', (req, res) => {
@@ -201,7 +250,7 @@ router.get('/:id', (req, res) => {
     .prepare(
       `SELECT ii.*, p.name AS product_name, p.sku FROM invoice_items ii
        LEFT JOIN products p ON ii.product_id = p.id
-       WHERE ii.invoice_id = ?`
+       WHERE ii.invoice_id = ? ORDER BY ii.id`
     )
     .all(invoice.id);
   const cashier = db

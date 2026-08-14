@@ -144,41 +144,55 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
 
   const totalRefund = lineItems.reduce((sum, l) => sum + l.line_total, 0);
 
-  db.exec('BEGIN');
+  // All writes in one transaction script (remote Turso friendly)
+  const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+  const num = (n) => (Number.isFinite(Number(n)) ? String(Number(n)) : '0');
+  const stockAgg = new Map();
+  for (const l of lineItems) stockAgg.set(l.product_id, (stockAgg.get(l.product_id) || 0) + l.qty);
+  const ensureStock =
+    `INSERT OR IGNORE INTO product_stock (product_id, store_id, stock_qty, reorder_level) VALUES ` +
+    [...stockAgg.keys()].map((pid) => `(${pid}, ${req.storeId}, 0, 0)`).join(', ') + ';';
+  const restock =
+    `UPDATE product_stock SET stock_qty = stock_qty + CASE product_id ` +
+    [...stockAgg].map(([pid, qty]) => `WHEN ${pid} THEN ${num(qty)}`).join(' ') +
+    ` END WHERE store_id = ${req.storeId} AND product_id IN (${[...stockAgg.keys()].join(',')});`;
+  const itemsInsert =
+    `INSERT INTO return_items (return_id, product_id, qty, unit_price, line_total)
+     SELECT ` +
+    lineItems
+      .map((l) => `?returnId?, ${l.product_id}, ${num(l.qty)}, ${num(l.unit_price)}, ${num(l.line_total)}`)
+      .join(' UNION ALL SELECT ') +
+    ';';
+
+  const returnInsert =
+    `INSERT INTO returns (store_id, invoice_id, reason, total_refund, created_by)
+     VALUES (${req.storeId}, ${invoice.id}, ${reason ? esc(reason) : 'NULL'}, ${num(totalRefund)}, ${req.user.id});`;
+
+  // Writes in 3 round trips: BEGIN+insert, read row id, then rest+COMMIT
+  let returnId;
   try {
-    const insertReturn = db.prepare(
-      `INSERT INTO returns (store_id, invoice_id, reason, total_refund, created_by)
-       VALUES (?,?,?,?,?)`
+    db.exec('BEGIN;\n' + returnInsert);
+    returnId = db.prepare('SELECT last_insert_rowid() AS id').get().id;
+    db.exec(
+      [
+        itemsInsert.replace(/\?returnId\?/g, returnId),
+        ensureStock,
+        restock,
+        'COMMIT;',
+      ].join('\n')
     );
-    const insertItem = db.prepare(
-      `INSERT INTO return_items (return_id, product_id, qty, unit_price, line_total)
-       VALUES (?,?,?,?,?)`
-    );
-    const restock = db.prepare(
-      `INSERT INTO product_stock (product_id, store_id, stock_qty, reorder_level)
-       VALUES (?,?,?,0)
-       ON CONFLICT(product_id, store_id) DO UPDATE SET
-         stock_qty = stock_qty + excluded.stock_qty`
-    );
-    const info = insertReturn.run(req.storeId, invoice.id, reason || null, totalRefund, req.user.id);
-    const returnId = info.lastInsertRowid;
-    for (const l of lineItems) {
-      insertItem.run(returnId, l.product_id, l.qty, l.unit_price, l.line_total);
-      restock.run(l.product_id, req.storeId, l.qty);
-    }
-    db.exec('COMMIT');
-    const ret = db.prepare('SELECT * FROM returns WHERE id = ?').get(returnId);
-    logActivity(
-      req.user,
-      'return',
-      `Return #${returnId} on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}`,
-      req.storeId
-    );
-    res.status(201).json({ return: ret });
   } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
+    try { db.exec('ROLLBACK'); } catch (er) { /* ignore */ }
+    return res.status(400).json({ error: e.message });
   }
+  const ret = db.prepare('SELECT * FROM returns WHERE id = ?').get(returnId);
+  logActivity(
+    req.user,
+    'return',
+    `Return #${returnId} on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}`,
+    req.storeId
+  );
+  res.status(201).json({ return: ret });
 });
 
 module.exports = router;
