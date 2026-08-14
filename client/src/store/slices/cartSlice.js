@@ -3,6 +3,7 @@ import { createSlice } from '@reduxjs/toolkit';
 const initialState = {
   items: [],
   discount: 0,
+  discountPct: null,
   paymentMode: 'cash',
   customerId: null,
 };
@@ -24,6 +25,7 @@ const cartSlice = createSlice({
           unit_price: p.selling_price,
           tax_percent: p.tax_percent,
           discount: 0,
+          discount_pct: null,
           qty: 1,
           stock_qty: p.stock_qty,
         });
@@ -43,6 +45,7 @@ const cartSlice = createSlice({
           unit_price: product.selling_price,
           tax_percent: product.tax_percent,
           discount: 0,
+          discount_pct: null,
           qty: add,
           stock_qty: product.stock_qty,
         });
@@ -59,7 +62,18 @@ const cartSlice = createSlice({
     updateItemDiscount(state, action) {
       const { product_id, discount } = action.payload;
       const item = state.items.find((i) => i.product_id === product_id);
-      if (item) item.discount = Math.max(0, discount);
+      if (item) {
+        item.discount = Math.max(0, discount);
+        if (item.discount > 0) item.discount_pct = null;
+      }
+    },
+    updateItemDiscountPct(state, action) {
+      const { product_id, discount_pct } = action.payload;
+      const item = state.items.find((i) => i.product_id === product_id);
+      if (item) {
+        item.discount_pct = Math.max(0, discount_pct);
+        if (item.discount_pct > 0) item.discount = 0;
+      }
     },
     setItemPrice(state, action) {
       const { product_id, unit_price } = action.payload;
@@ -71,6 +85,11 @@ const cartSlice = createSlice({
     },
     setDiscount(state, action) {
       state.discount = Math.max(0, action.payload);
+      if (state.discount > 0) state.discountPct = null;
+    },
+    setDiscountPct(state, action) {
+      state.discountPct = Math.max(0, action.payload);
+      if (state.discountPct > 0) state.discount = 0;
     },
     setPaymentMode(state, action) {
       state.paymentMode = action.payload;
@@ -81,6 +100,7 @@ const cartSlice = createSlice({
     clearCart(state) {
       state.items = [];
       state.discount = 0;
+      state.discountPct = null;
       state.paymentMode = 'cash';
       state.customerId = null;
     },
@@ -93,9 +113,11 @@ export const {
   setItems,
   updateQty,
   updateItemDiscount,
+  updateItemDiscountPct,
   setItemPrice,
   removeItem,
   setDiscount,
+  setDiscountPct,
   setPaymentMode,
   setCustomerId,
   clearCart,

@@ -4,6 +4,8 @@ import { listProducts, getProductByBarcode, listFrequentProducts } from '../api/
 import { listCustomers, createCustomer } from '../api/customers';
 import {
   createInvoice,
+  getInvoice,
+  listInvoices,
   holdInvoice,
   listHeldInvoices,
   retrieveHeldInvoice,
@@ -14,26 +16,34 @@ import {
   setItems,
   updateQty,
   updateItemDiscount,
+  updateItemDiscountPct,
   setItemPrice,
   removeItem,
   setDiscount,
+  setDiscountPct,
   setPaymentMode,
   setCustomerId,
   clearCart,
 } from '../store/slices/cartSlice';
 import { printReceipt } from '../utils/print';
 
-function computeTotals(items, billDiscount) {
+const round2 = (n) => Math.round(n * 100) / 100;
+
+function computeTotals(items, billDiscount, billDiscountPct) {
   let subtotal = 0;
   let taxTotal = 0;
   for (const it of items) {
     const lineSub = it.unit_price * it.qty;
     subtotal += lineSub;
-    const taxable = lineSub - (it.discount || 0);
+    const lineDisc = it.discount_pct
+      ? (lineSub * it.discount_pct) / 100
+      : it.discount || 0;
+    const taxable = lineSub - lineDisc;
     taxTotal += taxable * (it.tax_percent / 100);
   }
-  const grand = subtotal - (billDiscount || 0) + taxTotal;
-  return { subtotal, taxTotal, grand };
+  const disc = billDiscountPct ? (subtotal * billDiscountPct) / 100 : billDiscount || 0;
+  const grand = subtotal - disc + taxTotal;
+  return { subtotal, taxTotal, disc, grand };
 }
 
 export default function POS() {
@@ -58,6 +68,10 @@ export default function POS() {
   const [showCart, setShowCart] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [confetti, setConfetti] = useState([]);
+  const [splitPay, setSplitPay] = useState({ cash: '', card: '', upi: '' });
+  const [billDiscUnit, setBillDiscUnit] = useState('pct');
+  const [itemDiscUnits, setItemDiscUnits] = useState({});
+  const [recentSales, setRecentSales] = useState([]);
 
   const searchRef = useRef(null);
   const videoRef = useRef(null);
@@ -112,6 +126,15 @@ export default function POS() {
     }
   }, []);
 
+  const loadRecent = useCallback(async () => {
+    try {
+      const data = await listInvoices({ limit: 5 });
+      setRecentSales(data.invoices || []);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const handleAddCustomer = async () => {
     const name = window.prompt('New customer name:');
     if (!name || !name.trim()) return;
@@ -126,12 +149,22 @@ export default function POS() {
     }
   };
 
+  const handleReprint = async (id) => {
+    try {
+      const d = await getInvoice(id);
+      setReceipt({ invoice: d.invoice, items: d.items, cashier: d.cashier, store: d.store });
+    } catch (e) {
+      addToast(e.response?.data?.error || 'Could not load invoice', 'error');
+    }
+  };
+
   useEffect(() => {
     searchRef.current?.focus();
     loadFrequent();
     loadHeld();
     loadCustomers();
-  }, [loadFrequent, loadHeld, loadCustomers]);
+    loadRecent();
+  }, [loadFrequent, loadHeld, loadCustomers, loadRecent]);
 
   // Debounced product search
   useEffect(() => {
@@ -172,6 +205,9 @@ export default function POS() {
         setSelectedCustomer('');
         setReceivedCash('');
         setCreditSale(false);
+        setSplitPay({ cash: '', card: '', upi: '' });
+        setBillDiscUnit('pct');
+        setItemDiscUnits({});
         addToast('Cart cleared', 'info');
       }
     };
@@ -297,9 +333,20 @@ export default function POS() {
     lastScannedRef.current.clear();
   }, []);
 
-  const { subtotal, taxTotal, grand } = computeTotals(cart.items, cart.discount);
+  const { subtotal, taxTotal, disc, grand } = computeTotals(
+    cart.items,
+    cart.discount,
+    cart.discountPct
+  );
   const received = parseFloat(receivedCash) || 0;
   const change = received > grand ? received - grand : 0;
+
+  // Split payment helpers
+  const splitTotal = (['cash', 'card', 'upi'].reduce((s, k) => s + (parseFloat(splitPay[k]) || 0), 0));
+  const splitRemaining = round2(grand - splitTotal);
+  const splitCashNeed = Math.max(0, round2(grand - ((parseFloat(splitPay.card) || 0) + (parseFloat(splitPay.upi) || 0))));
+  const splitChange = Math.max(0, round2((parseFloat(splitPay.cash) || 0) - splitCashNeed));
+  const splitModes = ['cash', 'card', 'upi'].filter((k) => (parseFloat(splitPay[k]) || 0) > 0);
 
   const handleHold = async () => {
     if (cart.items.length === 0) {
@@ -310,6 +357,7 @@ export default function POS() {
       const payload = {
         items: cart.items,
         discount: cart.discount,
+        discountPct: cart.discountPct,
         paymentMode: cart.paymentMode,
         customerId: selectedCustomer || null,
       };
@@ -322,6 +370,8 @@ export default function POS() {
       setSelectedCustomer('');
       setReceivedCash('');
       setCreditSale(false);
+      setSplitPay({ cash: '', card: '', upi: '' });
+      setItemDiscUnits({});
       addToast('Bill parked. Retrieve it anytime with F4.', 'success');
     } catch (e) {
       addToast(e.response?.data?.error || 'Could not park bill', 'error');
@@ -334,6 +384,7 @@ export default function POS() {
       dispatch(clearCart());
       dispatch(setItems(heldBill.payload.items));
       dispatch(setDiscount(heldBill.payload.discount || 0));
+      dispatch(setDiscountPct(heldBill.payload.discountPct || null));
       dispatch(setPaymentMode(heldBill.payload.paymentMode || 'cash'));
       setSelectedCustomer(heldBill.payload.customerId || '');
       setHeldBills((h) => h.filter((x) => x.id !== id));
@@ -357,15 +408,36 @@ export default function POS() {
 
   const handleCharge = async () => {
     if (cart.items.length === 0) return;
-    if (creditSale && !selectedCustomer) {
+    const billDiscount = cart.discountPct
+      ? round2((subtotal * cart.discountPct) / 100)
+      : cart.discount || 0;
+    const usingSplit = splitTotal > 0;
+    if (usingSplit) {
+      if (splitRemaining < -0.001) {
+        addToast('Payment amounts exceed the bill total', 'error');
+        return;
+      }
+      if (splitRemaining > 0.001 && !(creditSale && selectedCustomer)) {
+        addToast('Enter the full amount or enable credit for the balance', 'error');
+        return;
+      }
+    } else if (creditSale && !selectedCustomer) {
       addToast('Select a customer for a credit sale', 'error');
       return;
     }
     setCharging(true);
     setError('');
     try {
-      const amountPaid = creditSale ? received || 0 : grand;
-      const status = creditSale
+      const amountPaid = usingSplit
+        ? splitTotal
+        : creditSale
+        ? received || 0
+        : grand;
+      const status = usingSplit
+        ? splitTotal >= grand - 0.001
+          ? 'paid'
+          : 'credit'
+        : creditSale
         ? received >= grand
           ? 'paid'
           : 'credit'
@@ -373,20 +445,30 @@ export default function POS() {
       const dueDate = creditSale && status === 'credit'
         ? new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
         : null;
+      const breakdown = usingSplit
+        ? splitModes.map((k) => ({ mode: k, amount: round2(parseFloat(splitPay[k]) || 0) }))
+        : null;
       const payload = {
         items: cart.items.map((i) => ({
           product_id: i.product_id,
           qty: i.qty,
           unit_price: i.unit_price,
-          discount: i.discount,
+          discount: i.discount_pct
+            ? round2((i.unit_price * i.qty * i.discount_pct) / 100)
+            : i.discount || 0,
           tax_percent: i.tax_percent,
         })),
-        discount: cart.discount,
-        payment_mode: cart.paymentMode,
+        discount: billDiscount,
+        payment_mode: usingSplit
+          ? splitModes.length === 1
+            ? splitModes[0]
+            : 'mixed'
+          : cart.paymentMode,
         customer_id: selectedCustomer || null,
         amount_paid: amountPaid,
         status,
         due_date: dueDate,
+        payment_breakdown: breakdown,
       };
       const res = await createInvoice(payload);
       const detail = res.receipt;
@@ -396,8 +478,12 @@ export default function POS() {
       setSelectedCustomer('');
       setReceivedCash('');
       setCreditSale(false);
+      setSplitPay({ cash: '', card: '', upi: '' });
+      setItemDiscUnits({});
+      setBillDiscUnit('pct');
       loadFrequent();
       loadHeld();
+      loadRecent();
       burstConfetti();
       addToast('Sale saved · ' + res.invoice.invoiceNo, 'success');
     } catch (e) {
@@ -562,6 +648,30 @@ export default function POS() {
         </div>
         {error && <div className="text-red-600 text-sm mb-2 animate-shake">{error}</div>}
 
+        {/* Recent sales - reprint */}
+        {recentSales.length > 0 && (
+          <div className="mb-2 p-2 rounded bg-slate-50 border border-slate-200">
+            <div className="text-xs font-semibold text-slate-600 mb-1">
+              Last sales — tap to reprint
+            </div>
+            <div className="flex flex-col gap-1 max-h-24 overflow-auto">
+              {recentSales.map((s) => (
+                <div key={s.id} className="flex items-center justify-between text-xs">
+                  <button
+                    className="text-left hover:underline text-slate-700"
+                    onClick={() => handleReprint(s.id)}
+                    title="Reprint receipt"
+                  >
+                    {s.invoice_no} · ₹{s.grand_total.toFixed(2)} ·{' '}
+                    {new Date(s.created_at).toLocaleTimeString()}
+                  </button>
+                  <span className="text-slate-400">{s.cashier_name || ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Parked bills */}
         {heldBills.length > 0 && (
           <div className="mb-2 p-2 rounded bg-amber-50 border border-amber-200">
@@ -666,21 +776,75 @@ export default function POS() {
                   )}
                 </div>
                 <div className="mt-1 flex items-center gap-2">
-                  <label className="text-xs text-slate-500">Disc ₹</label>
-                  <input
-                    type="number"
-                    className="w-16 border rounded text-xs"
-                    value={it.discount || 0}
-                    min={0}
-                    onChange={(e) =>
-                      dispatch(
-                        updateItemDiscount({
-                          product_id: it.product_id,
-                          discount: Number(e.target.value),
-                        })
-                      )
-                    }
-                  />
+                  <label className="text-xs text-slate-500">Disc</label>
+                  <div className="flex items-center border rounded text-xs overflow-hidden">
+                    <button
+                      type="button"
+                      className={
+                        (itemDiscUnits[it.product_id] || 'amt') === 'pct'
+                          ? 'px-1.5 py-0.5 bg-slate-800 text-white'
+                          : 'px-1.5 py-0.5 text-slate-500 hover:bg-slate-100'
+                      }
+                      onClick={() =>
+                        setItemDiscUnits((u) => ({ ...u, [it.product_id]: 'pct' }))
+                      }
+                    >
+                      %
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        (itemDiscUnits[it.product_id] || 'amt') === 'amt'
+                          ? 'px-1.5 py-0.5 bg-slate-800 text-white'
+                          : 'px-1.5 py-0.5 text-slate-500 hover:bg-slate-100'
+                      }
+                      onClick={() =>
+                        setItemDiscUnits((u) => ({ ...u, [it.product_id]: 'amt' }))
+                      }
+                    >
+                      ₹
+                    </button>
+                  </div>
+                  {(itemDiscUnits[it.product_id] || 'amt') === 'pct' ? (
+                    <>
+                      <input
+                        type="number"
+                        className="w-14 border rounded text-xs"
+                        value={it.discount_pct || 0}
+                        min={0}
+                        max={100}
+                        onChange={(e) =>
+                          dispatch(
+                            updateItemDiscountPct({
+                              product_id: it.product_id,
+                              discount_pct: Number(e.target.value),
+                            })
+                          )
+                        }
+                      />
+                      <span className="text-[10px] text-slate-400">
+                        = ₹
+                        {round2(
+                          (it.unit_price * it.qty * (it.discount_pct || 0)) / 100
+                        ).toFixed(2)}
+                      </span>
+                    </>
+                  ) : (
+                    <input
+                      type="number"
+                      className="w-16 border rounded text-xs"
+                      value={it.discount || 0}
+                      min={0}
+                      onChange={(e) =>
+                        dispatch(
+                          updateItemDiscount({
+                            product_id: it.product_id,
+                            discount: Number(e.target.value),
+                          })
+                        )
+                      }
+                    />
+                  )}
                 </div>
               </div>
             ))
@@ -697,14 +861,73 @@ export default function POS() {
             <span>₹{taxTotal.toFixed(2)}</span>
           </div>
           <div className="flex justify-between items-center">
-            <span>Bill Discount ₹</span>
-            <input
-              type="number"
-              className="w-20 border rounded text-right"
-              value={cart.discount || 0}
-              min={0}
-              onChange={(e) => dispatch(setDiscount(Number(e.target.value)))}
-            />
+            <span>Bill Discount</span>
+            <div className="flex items-center gap-1">
+              {[5, 10, 15, 20].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => {
+                    dispatch(setDiscountPct(p));
+                    setBillDiscUnit('pct');
+                  }}
+                  className={`px-2 py-0.5 rounded text-xs border transition ${
+                    cart.discountPct === p
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-emerald-50'
+                  }`}
+                >
+                  {p}%
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-between items-center">
+            <div className="flex items-center border rounded text-xs overflow-hidden">
+              <button
+                type="button"
+                className={
+                  billDiscUnit === 'pct'
+                    ? 'px-2 py-0.5 bg-slate-800 text-white'
+                    : 'px-2 py-0.5 text-slate-500 hover:bg-slate-100'
+                }
+                onClick={() => setBillDiscUnit('pct')}
+              >
+                %
+              </button>
+              <button
+                type="button"
+                className={
+                  billDiscUnit === 'amt'
+                    ? 'px-2 py-0.5 bg-slate-800 text-white'
+                    : 'px-2 py-0.5 text-slate-500 hover:bg-slate-100'
+                }
+                onClick={() => setBillDiscUnit('amt')}
+              >
+                ₹
+              </button>
+            </div>
+            {billDiscUnit === 'pct' ? (
+              <>
+                <input
+                  type="number"
+                  className="w-16 border rounded text-right"
+                  value={cart.discountPct || 0}
+                  min={0}
+                  max={100}
+                  onChange={(e) => dispatch(setDiscountPct(Number(e.target.value)))}
+                />
+                <span className="text-xs text-slate-400">= ₹{disc.toFixed(2)}</span>
+              </>
+            ) : (
+              <input
+                type="number"
+                className="w-20 border rounded text-right"
+                value={cart.discount || 0}
+                min={0}
+                onChange={(e) => dispatch(setDiscount(Number(e.target.value)))}
+              />
+            )}
           </div>
 
           {/* Customer */}
@@ -748,8 +971,80 @@ export default function POS() {
             <option value="upi">UPI / Other</option>
           </select>
 
+          {/* Split payment */}
+          {!creditSale && cart.items.length > 0 && (
+            <div className="rounded bg-slate-50 p-2 mt-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-slate-600">Split payment</span>
+                {splitTotal > 0 && (
+                  <span
+                    className={`text-xs font-medium ${
+                      splitRemaining > 0.001
+                        ? 'text-amber-600'
+                        : splitRemaining < -0.001
+                        ? 'text-red-600'
+                        : 'text-emerald-600'
+                    }`}
+                  >
+                    {splitRemaining > 0.001
+                      ? `Remaining ₹${splitRemaining.toFixed(2)}`
+                      : splitRemaining < -0.001
+                      ? `Over by ₹${Math.abs(splitRemaining).toFixed(2)}`
+                      : 'Fully paid'}
+                  </span>
+                )}
+              </div>
+              {['cash', 'card', 'upi'].map((k) => (
+                <div key={k} className="flex items-center justify-between">
+                  <span className="text-xs capitalize text-slate-500">{k}</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-24 border rounded text-right text-sm"
+                      placeholder="0.00"
+                      value={splitPay[k]}
+                      onChange={(e) => setSplitPay((s) => ({ ...s, [k]: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      title="Pay the remaining amount with this mode"
+                      onClick={() =>
+                        setSplitPay((s) => ({
+                          ...s,
+                          [k]: Math.max(0, splitRemaining).toFixed(2),
+                        }))
+                      }
+                      className="px-1.5 py-0.5 rounded border text-[10px] text-slate-500 hover:bg-slate-100"
+                    >
+                      All
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {splitModes.length > 0 && (
+                <div className="flex justify-between mt-1 text-xs">
+                  <span>Paid</span>
+                  <span className="font-semibold">₹{splitTotal.toFixed(2)}</span>
+                </div>
+              )}
+              {splitChange > 0 && (
+                <div className="flex justify-between mt-1 text-xs font-semibold text-emerald-600">
+                  <span>Cash change</span>
+                  <span>₹{splitChange.toFixed(2)}</span>
+                </div>
+              )}
+              {splitRemaining > 0.001 && (
+                <div className="mt-1 text-[10px] text-amber-600">
+                  Balance will be billed as credit — select a customer and enable "Bill as
+                  credit".
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Cash change calculator */}
-          {cart.paymentMode === 'cash' && !creditSale && (
+          {cart.paymentMode === 'cash' && !creditSale && splitTotal === 0 && (
             <div className="rounded bg-slate-50 p-2 mt-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500">Cash received ₹</span>
@@ -777,7 +1072,10 @@ export default function POS() {
             <input
               type="checkbox"
               checked={creditSale}
-              onChange={(e) => setCreditSale(e.target.checked)}
+              onChange={(e) => {
+                setCreditSale(e.target.checked);
+                if (e.target.checked) setSplitPay({ cash: '', card: '', upi: '' });
+              }}
             />
             Bill as credit (customer pays later)
           </label>
@@ -929,7 +1227,31 @@ export default function POS() {
                   <span>Total</span>
                   <span>₹{receipt.invoice.grand_total.toFixed(2)}</span>
                 </div>
-                <div className="text-xs mt-1">Mode: {receipt.invoice.payment_mode}</div>
+                {receipt.invoice.payment_breakdown &&
+                receipt.invoice.payment_breakdown.length > 0 ? (
+                  <div className="text-xs mt-1 border-t pt-1">
+                    <div className="flex justify-between font-semibold mb-0.5">
+                      <span>Payment split</span>
+                      <span>₹{receipt.invoice.grand_total.toFixed(2)}</span>
+                    </div>
+                    {receipt.invoice.payment_breakdown.map((b) => (
+                      <div key={b.mode} className="flex justify-between">
+                        <span className="capitalize">{b.mode}</span>
+                        <span>₹{Number(b.amount).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs mt-1">Mode: {receipt.invoice.payment_mode}</div>
+                )}
+                {receipt.invoice.status === 'credit' && (
+                  <div className="text-xs mt-1 text-amber-600">
+                    Balance due: ₹
+                    {(
+                      receipt.invoice.grand_total - (receipt.invoice.amount_paid || 0)
+                    ).toFixed(2)}
+                  </div>
+                )}
               </div>
               {receipt.store?.receipt_footer ? (
                 <div className="text-center text-xs mt-3">{receipt.store.receipt_footer}</div>

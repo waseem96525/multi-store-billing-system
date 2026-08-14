@@ -311,6 +311,9 @@ if (!invoiceCols.includes('status')) {
 if (!invoiceCols.includes('due_date')) {
   db.exec('ALTER TABLE invoices ADD COLUMN due_date TEXT');
 }
+if (!invoiceCols.includes('payment_breakdown')) {
+  db.exec('ALTER TABLE invoices ADD COLUMN payment_breakdown TEXT');
+}
 
 const adminCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
 if (adminCount === 0) {

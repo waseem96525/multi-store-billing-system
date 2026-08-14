@@ -55,11 +55,12 @@ router.post('/', (req, res) => {
     amount_paid = 0,
     status = 'paid',
     due_date = null,
+    payment_breakdown = null,
   } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'items required' });
   }
-  if (!['cash', 'card', 'upi'].includes(payment_mode)) {
+  if (!['cash', 'card', 'upi', 'mixed'].includes(payment_mode)) {
     return res.status(400).json({ error: 'Invalid payment mode' });
   }
   if (!['paid', 'credit'].includes(status)) {
@@ -67,6 +68,24 @@ router.post('/', (req, res) => {
   }
   if (due_date && !/^\d{4}-\d{2}-\d{2}$/.test(String(due_date))) {
     return res.status(400).json({ error: 'Invalid due date' });
+  }
+
+  // Split payments: e.g. [{ mode: 'cash', amount: 500 }, { mode: 'upi', amount: 250 }]
+  let breakdown = null;
+  if (payment_breakdown) {
+    if (!Array.isArray(payment_breakdown)) {
+      return res.status(400).json({ error: 'Invalid payment breakdown' });
+    }
+    breakdown = [];
+    for (const b of payment_breakdown) {
+      const mode = String(b.mode || '').toLowerCase();
+      const amt = Number(b.amount);
+      if (!['cash', 'card', 'upi'].includes(mode) || !(amt > 0)) {
+        return res.status(400).json({ error: 'Invalid payment breakdown' });
+      }
+      breakdown.push({ mode, amount: amt });
+    }
+    if (breakdown.length === 0) breakdown = null;
   }
 
   // Keep the number of remote (Turso) round trips small: all reads go into a
@@ -134,7 +153,10 @@ router.post('/', (req, res) => {
   }
   const grandTotal = subtotal - Number(discount) + taxTotal;
   const cid = customer_id ? Number(customer_id) : null;
-  const amtPaid = Number(amount_paid) || 0;
+  const amtPaid = breakdown ? breakdown.reduce((s, b) => s + b.amount, 0) : Number(amount_paid) || 0;
+  const modeLabel = breakdown
+    ? breakdown.map((b) => `${b.mode} ₹${b.amount}`).join(' + ')
+    : payment_mode;
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
   const num = (n) => (Number.isFinite(Number(n)) ? String(Number(n)) : '0');
@@ -163,8 +185,8 @@ router.post('/', (req, res) => {
 
   const invoiceInsert =
     `INSERT INTO invoices
-       (invoice_no, customer_id, subtotal, discount, tax_total, grand_total, payment_mode, created_by, amount_paid, status, due_date, store_id, created_at)
-     VALUES (${esc(invoiceNo)}, ${cid === null ? 'NULL' : cid}, ${num(subtotal)}, ${num(discount)}, ${num(taxTotal)}, ${num(grandTotal)}, ${esc(payment_mode)}, ${req.user.id}, ${num(amtPaid)}, ${esc(status)}, ${due_date ? esc(due_date) : 'NULL'}, ${req.storeId}, ${esc(now)});`;
+       (invoice_no, customer_id, subtotal, discount, tax_total, grand_total, payment_mode, created_by, amount_paid, status, due_date, store_id, created_at, payment_breakdown)
+     VALUES (${esc(invoiceNo)}, ${cid === null ? 'NULL' : cid}, ${num(subtotal)}, ${num(discount)}, ${num(taxTotal)}, ${num(grandTotal)}, ${esc(payment_mode)}, ${req.user.id}, ${num(amtPaid)}, ${esc(status)}, ${due_date ? esc(due_date) : 'NULL'}, ${req.storeId}, ${esc(now)}, ${breakdown ? esc(JSON.stringify(breakdown)) : 'NULL'});`;
 
   // Writes in 3 round trips: BEGIN+invoice, read row id, then stock+items+COMMIT
   let invoiceId;
@@ -182,7 +204,7 @@ router.post('/', (req, res) => {
   logActivity(
     req.user,
     'sale',
-    `${invoiceNo} · ${processed.length} item(s) · ${payment_mode} · ₹${grandTotal.toFixed(2)}${status === 'credit' ? ' · CREDIT' : ''}`,
+    `${invoiceNo} · ${processed.length} item(s) · ${modeLabel} · ₹${grandTotal.toFixed(2)}${status === 'credit' ? ' · CREDIT' : ''}`,
     req.storeId
   );
 
@@ -217,6 +239,8 @@ router.post('/', (req, res) => {
         discount: Number(discount),
         grand_total: grandTotal,
         payment_mode,
+        amount_paid: amtPaid,
+        payment_breakdown: breakdown,
       },
 items: receiptItems,
       cashier: { name: req.user.name },
@@ -237,7 +261,8 @@ router.get('/', (req, res) => {
     sql += ' AND i.invoice_no LIKE ?';
     params.push(`%${q}%`);
   }
-  sql += ' ORDER BY i.id DESC LIMIT 200';
+  const limit = Math.min(parseInt(req.query.limit, 10) || 200, 200);
+  sql += ' ORDER BY i.id DESC LIMIT ' + limit;
   res.json({ invoices: db.prepare(sql).all(...params) });
 });
 
@@ -246,6 +271,11 @@ router.get('/:id', (req, res) => {
     .prepare('SELECT * FROM invoices WHERE id = ? AND store_id = ?')
     .get(req.params.id, req.storeId);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (invoice.payment_breakdown) {
+    try { invoice.payment_breakdown = JSON.parse(invoice.payment_breakdown); } catch (e) { invoice.payment_breakdown = null; }
+  } else {
+    invoice.payment_breakdown = null;
+  }
   const items = db
     .prepare(
       `SELECT ii.*, p.name AS product_name, p.sku FROM invoice_items ii
