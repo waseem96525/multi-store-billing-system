@@ -23,7 +23,7 @@ const ENTITIES = {
         db.where('product_stock', (r) => Number(r.store_id) === Number(storeId)),
         db.all('categories'),
       ]);
-      const stockMap = new Map(stockRows.map((r) => [r.product_id, r]));
+      const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
       const catMap = new Map(categories.map((c) => [c.id, c]));
       return products
         .map((p) => {

@@ -70,8 +70,8 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
     db.where('product_stock', (r) => Number(r.store_id) === Number(to_store_id)),
   ]);
   const productMap = new Map(allProducts.filter((p) => ids.includes(p.id)).map((p) => [p.id, p]));
-  const outStockMap = new Map(outStock.map((r) => [r.product_id, r]));
-  const inStockMap = new Map(inStock.map((r) => [r.product_id, r]));
+  const outStockMap = new Map(outStock.map((r) => [Number(r.product_id), r]));
+  const inStockMap = new Map(inStock.map((r) => [Number(r.product_id), r]));
   for (const pid of ids) {
     if (!productMap.has(pid)) return res.status(400).json({ error: 'Product not found: ' + pid });
   }

@@ -216,7 +216,7 @@ router.put('/:id', authorize('admin', 'inventory'), asyncHandler(async (req, res
     updated_at: db.now(),
   };
   const stockPatch = {
-    product_id: id,
+    product_id: Number(id),
     store_id: req.storeId,
     stock_qty: stock_qty !== undefined ? Number(stock_qty) : (curStock ? curStock.stock_qty : 0),
     reorder_level:

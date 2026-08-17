@@ -55,8 +55,8 @@ router.get('/', asyncHandler(async (req, res) => {
     lowStockItems: lowStockItems.map((r) => ({
       stock_qty: r.stock_qty,
       reorder_level: r.reorder_level,
-      id: r.product_id,
-      name: productMap.get(r.product_id) ? productMap.get(r.product_id).name : null,
+      id: Number(r.product_id),
+      name: productMap.get(Number(r.product_id)) ? productMap.get(Number(r.product_id)).name : null,
     })),
     totalProducts: stockRows.length,
     topProducts,

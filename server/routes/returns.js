@@ -179,7 +179,7 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
 
   const stockAgg = new Map();
   for (const l of lineItems) stockAgg.set(l.product_id, (stockAgg.get(l.product_id) || 0) + l.qty);
-  const stockMap = new Map(stockRows.map((r) => [r.product_id, r]));
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
 
   const now = db.now();
   const paths = {};

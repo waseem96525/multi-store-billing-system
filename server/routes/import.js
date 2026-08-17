@@ -74,7 +74,7 @@ router.post('/products', authorize('admin', 'inventory'), asyncHandler(async (re
   const bySku = new Map(products.filter((p) => p.sku).map((p) => [p.sku, p]));
   const byName = new Map(products.map((p) => [String(p.name).toLowerCase(), p]));
   const catByName = new Map(categories.map((c) => [String(c.name).toLowerCase(), c]));
-  const stockMap = new Map(stockRows.map((r) => [r.product_id, r]));
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
 
   // Pass 1: parse + validate every row, count new products/categories
   const entries = [];

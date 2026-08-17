@@ -18,7 +18,7 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
     db.all('categories'),
   ]);
   const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
-  const stockMap = new Map(stockRows.map((r) => [r.product_id, r]));
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
   const rows = [];
   for (const p of products) {
     const s = stockMap.get(p.id);
@@ -66,7 +66,7 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
   ]);
   if (!supplier) return res.status(400).json({ error: 'Supplier not found' });
   const productMap = new Map(allProducts.filter((p) => ids.includes(p.id)).map((p) => [p.id, p]));
-  const stockMap = new Map(stockRows.map((r) => [r.product_id, r]));
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
   for (const pid of ids) {
     if (!productMap.has(pid)) return res.status(400).json({ error: 'Product not found: ' + pid });
   }
