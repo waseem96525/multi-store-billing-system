@@ -1,16 +1,31 @@
 import { useEffect, useState } from 'react';
 import { getDashboard } from '../api/dashboard';
 import CountUp from '../components/CountUp';
+import useLiveCatalog from '../realtime/useLiveCatalog';
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  const load = () => {
     getDashboard()
       .then(setData)
       .catch((e) => setError(e.response?.data?.error || 'Failed to load'));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
+
+  // Live sync: refresh when a sale, purchase or stock change happens on any
+  // device (debounced so bursts are batched into one reload).
+  const live = useLiveCatalog();
+  useEffect(() => {
+    if (!live.ready) return;
+    const t = setTimeout(load, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.version]);
 
   if (error) return <div className="text-red-600">{error}</div>;
   if (!data) return <div>Loading...</div>;

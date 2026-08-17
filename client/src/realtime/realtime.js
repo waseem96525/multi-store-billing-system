@@ -14,7 +14,13 @@ import { getAppConfig } from '../api/config';
 import { idbGet, idbPut } from '../offline/indexeddb';
 import { catalogKey } from '../offline/offlineStore';
 
+// Paths streamed for their data (kept in memory) vs paths streamed purely as
+// change signals (invoices, suppliers) so pages like the Dashboard can
+// refresh the moment a sale/purchase happens on any device without the
+// browser keeping a copy of that data.
 const STREAM_PATHS = ['products', 'product_stock', 'customers', 'stores'];
+const SIGNAL_PATHS = ['invoices', 'suppliers'];
+const ALL_STREAM_PATHS = [...STREAM_PATHS, ...SIGNAL_PATHS];
 
 const live = {
   products: new Map(), // key (string id) -> product row
@@ -94,6 +100,7 @@ function mapFor(path) {
 }
 
 function applyStreamEvent(path, evt) {
+  if (SIGNAL_PATHS.includes(path)) return; // change notification only
   const msg = JSON.parse(evt.data);
   const keyPath = String(msg.path || '/')
     .split('/')
@@ -161,7 +168,7 @@ function closeAll() {
 
 function startStreams() {
   if (!dbUrl || !currentToken()) return;
-  for (const p of STREAM_PATHS) openStream(p);
+  for (const p of ALL_STREAM_PATHS) openStream(p);
 }
 
 function scheduleReconnect() {
