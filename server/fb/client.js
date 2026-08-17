@@ -3,10 +3,18 @@
 // (attached automatically via AsyncLocalStorage). Nested-path PATCHes
 // allow several tables to be written in one round trip, which keeps
 // checkouts and bulk imports fast on a hosted database.
+//
+// Serverless note: the TLS connection to the RTDB (often in a distant
+// region, e.g. asia-southeast1) is occasionally reset by the network.
+// Transient network failures and 5xx/429 responses are retried with a
+// short backoff so a single dropped socket does not 500 the request.
 const config = require('../config');
 const { tokenStore } = require('./context');
 
 const dbUrl = config.firebase.databaseURL.replace(/\/+$/, '');
+
+const MAX_ATTEMPTS = 3;
+const RETRYABLE_STATUS = [408, 425, 429, 500, 502, 503, 504];
 
 class HttpError extends Error {
   constructor(message, status) {
@@ -15,7 +23,7 @@ class HttpError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, query = {} } = {}) {
+async function attemptRequest(path, { method, body, query }) {
   const token = tokenStore();
   const url = new URL(`${dbUrl}/${String(path).replace(/^\/+/, '')}.json`);
   if (token) url.searchParams.set('auth', token);
@@ -46,6 +54,23 @@ async function request(path, { method = 'GET', body, query = {} } = {}) {
     throw new HttpError(detail, res.status);
   }
   return data;
+}
+
+async function request(path, opts = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await attemptRequest(path, opts);
+    } catch (err) {
+      const isNetworkError = !(err instanceof HttpError);
+      const isRetriableHttp =
+        err instanceof HttpError && RETRYABLE_STATUS.includes(err.status);
+      if ((!isNetworkError && !isRetriableHttp) || attempt === MAX_ATTEMPTS) throw err;
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 150 * attempt));
+    }
+  }
+  throw lastErr;
 }
 
 module.exports = {
