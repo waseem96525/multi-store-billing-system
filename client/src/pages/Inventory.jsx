@@ -57,11 +57,6 @@ export default function Inventory() {
   const [importError, setImportError] = useState('');
 
   const formRef = useRef(null);
-  const scrollForm = (dir) => {
-    const el = formRef.current;
-    if (!el) return;
-    el.scrollTo({ top: dir === 'bottom' ? el.scrollHeight : 0, behavior: 'smooth' });
-  };
 
   const panelRef = useRef(null);
   const dragOrigin = useRef(null);
@@ -89,6 +84,18 @@ export default function Inventory() {
       window.removeEventListener('pointerup', up);
     };
   }, [dragging]);
+
+  useEffect(() => {
+    if (!showForm) return;
+    const prevOverflow = document.body.style.overflow;
+    const prevOverflowX = document.body.style.overflowX;
+    document.body.style.overflow = 'hidden';
+    document.body.style.overflowX = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.overflowX = prevOverflowX;
+    };
+  }, [showForm]);
 
   const load = async () => {
     try {
@@ -406,7 +413,7 @@ export default function Inventory() {
             <form
               ref={formRef}
               onSubmit={handleSubmit}
-              className="bg-white p-5 pr-12 rounded-lg max-h-[90vh] overflow-y-auto overflow-x-hidden space-y-2"
+              className="bg-white p-5 rounded-lg max-h-[90vh] overflow-y-auto overflow-x-hidden space-y-2"
             >
             <div
               className="flex items-center justify-between mb-2 cursor-move select-none touch-none"
@@ -596,26 +603,6 @@ export default function Inventory() {
               </button>
             </div>
           </form>
-
-          {/* Floating scroll helpers for the tall product form */}
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-10">
-            <button
-              type="button"
-              onClick={() => scrollForm('top')}
-              title="Scroll to top"
-              className="w-9 h-9 rounded-full bg-slate-800 text-white shadow-lg flex items-center justify-center hover:bg-slate-700"
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              onClick={() => scrollForm('bottom')}
-              title="Scroll to bottom"
-              className="w-9 h-9 rounded-full bg-emerald-600 text-white shadow-lg flex items-center justify-center hover:bg-emerald-700"
-            >
-              ↓
-            </button>
-          </div>
           </div>
         </div>
       )}
