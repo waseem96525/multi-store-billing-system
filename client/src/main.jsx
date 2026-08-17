@@ -7,9 +7,11 @@ import App from './App';
 import './index.css';
 import { initTheme } from './utils/theme';
 import { startOfflineEngine } from './offline/offlineStore';
+import { tryAutoConnect } from './utils/serialPrinter';
 
 initTheme();
 startOfflineEngine();
+tryAutoConnect().catch(() => {});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {

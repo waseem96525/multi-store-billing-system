@@ -10,6 +10,12 @@ import {
   deleteCategory,
 } from '../api/products';
 import { printLabels } from '../utils/print';
+import {
+  subscribe as subscribePrinter,
+  isConnected as printerConnected,
+  getConfig as getPrinterConfig,
+  printLabels as printSerialLabels,
+} from '../utils/serialPrinter';
 import { exportCsv } from '../api/export';
 import { importProducts } from '../api/import';
 import { parseCsv, csvToObjects } from '../utils/csv';
@@ -56,6 +62,12 @@ export default function Inventory() {
   const [importResult, setImportResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
+
+  const [printerOn, setPrinterOn] = useState(false);
+  const [printerAuto, setPrinterAuto] = useState(() => getPrinterConfig().autoUse);
+  const [printMsg, setPrintMsg] = useState('');
+
+  useEffect(() => subscribePrinter((s) => setPrinterOn(s.connected)), []);
 
   const formRef = useRef(null);
 
@@ -263,6 +275,40 @@ export default function Inventory() {
     printLabels(items);
   };
 
+  const toLabelItems = (list) =>
+    list.map((p) => ({
+      name: p.name,
+      price: 'Rs ' + Number(p.selling_price || 0).toFixed(2),
+      code: p.barcode || p.sku || String(p.id),
+      copies: 1,
+    }));
+
+  const handlePrintSerial = async (list) => {
+    if (!printerConnected()) {
+      setPrintMsg('USB printer not connected (set it up in Settings)');
+      return;
+    }
+    setPrintMsg('');
+    try {
+      const items = toLabelItems(list);
+      if (!items.length) return;
+      await printSerialLabels(items);
+      setPrintMsg(`Sent ${list.length} label(s) to USB printer`);
+    } catch (e) {
+      setPrintMsg(e.message || 'Print failed');
+    }
+  };
+
+  const handlePrintOne = (p) => {
+    if (printerAuto && printerConnected()) handlePrintSerial([p]);
+    else printLabels(toLabelItems([p]));
+  };
+
+  const handlePrintLabelsSerial = () => {
+    const sel = products.filter((p) => labelSel[p.id]);
+    handlePrintSerial(sel);
+  };
+
   const openImport = () => {
     setShowImport(true);
     setImportText('');
@@ -399,6 +445,13 @@ export default function Inventory() {
                 <td className="p-2 text-right whitespace-nowrap">
                   <button className="text-blue-600 mr-2" onClick={() => openEdit(p)}>
                     Edit
+                  </button>
+                  <button
+                    className="text-slate-500 mr-2"
+                    title="Print barcode label"
+                    onClick={() => handlePrintOne(p)}
+                  >
+                    Print
                   </button>
                   <button className="text-red-600" onClick={() => handleDelete(p)}>
                     Delete
@@ -737,15 +790,27 @@ export default function Inventory() {
                 onClick={handlePrintLabels}
                 disabled={products.filter((p) => labelSel[p.id]).length === 0}
               >
-                Print
+                Print (browser)
               </button>
               <button
-                className="flex-1 border py-2 rounded"
+                className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+                onClick={handlePrintLabelsSerial}
+                disabled={!printerOn || products.filter((p) => labelSel[p.id]).length === 0}
+              >
+                Print to USB printer
+              </button>
+              <button
+                className="px-4 border py-2 rounded"
                 onClick={() => setShowLabels(false)}
               >
                 Cancel
               </button>
             </div>
+            {printMsg && (
+              <div className={printerOn || printMsg.includes('Sent') ? 'text-green-600 text-sm' : 'text-red-600 text-sm'}>
+                {printMsg}
+              </div>
+            )}
           </div>
         </div>
       )}
