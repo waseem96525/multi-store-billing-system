@@ -334,11 +334,6 @@ export default function POS() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanning]);
 
-  chargeRef.current = handleCharge;
-  holdRef.current = handleHold;
-  scannerRef.current = startScanner;
-  reprintRef.current = handleReprint;
-
   const handleAdd = useCallback(
     (product, qty = addQty) => {
       dispatch(addItemQty({ product, qty: Number(qty) || 1 }));
@@ -721,6 +716,13 @@ export default function POS() {
       setCharging(false);
     }
   };
+
+  // Assign refs AFTER every handler is defined (const TDZ: these must not run
+  // before handleCharge/handleHold/startScanner are initialized).
+  chargeRef.current = handleCharge;
+  holdRef.current = handleHold;
+  scannerRef.current = startScanner;
+  reprintRef.current = handleReprint;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full pb-20 lg:pb-0">
