@@ -117,6 +117,109 @@
   animation: confettiFall 2.4s linear forwards;
 }
 
+/* ===== App-wide creative animations ===== */
+
+/* Route / page entrance */
+@keyframes routeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.animate-route { animation: routeIn 0.35s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+
+/* Animated active nav indicator (emerald accent bar) */
+.nav-active {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.18), rgba(51, 65, 85, 0));
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.25);
+}
+.nav-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 4px;
+  border-radius: 4px;
+  background: #10b981;
+  transform: scaleY(0);
+  transform-origin: center;
+  animation: growY 0.3s ease forwards;
+}
+@keyframes growY { to { transform: scaleY(1); } }
+
+/* Staggered card entrance on dashboards / grids */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+.stagger > .stagger-item {
+  opacity: 0;
+  animation: fadeUp 0.5s ease forwards;
+}
+.stagger > .stagger-item:nth-child(1) { animation-delay: 0.05s; }
+.stagger > .stagger-item:nth-child(2) { animation-delay: 0.12s; }
+.stagger > .stagger-item:nth-child(3) { animation-delay: 0.19s; }
+.stagger > .stagger-item:nth-child(4) { animation-delay: 0.26s; }
+.stagger > .stagger-item:nth-child(5) { animation-delay: 0.33s; }
+.stagger > .stagger-item:nth-child(6) { animation-delay: 0.40s; }
+
+.hover-lift { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.hover-lift:hover { transform: translateY(-4px); box-shadow: 0 12px 26px rgba(15, 23, 42, 0.14); }
+
+/* Universal button micro-interaction (press feedback) */
+button { transition: transform 0.1s ease, box-shadow 0.2s ease, background-color 0.2s ease; }
+button:active:not(:disabled) { transform: scale(0.97); }
+button:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
+
+/* Animated success checkmark (drawn on appear) */
+.check-circle {
+  stroke-dasharray: 151;
+  stroke-dashoffset: 151;
+  animation: drawCircle 0.5s ease forwards;
+}
+.check-mark {
+  stroke-dasharray: 44;
+  stroke-dashoffset: 44;
+  animation: drawMark 0.35s 0.45s ease forwards;
+}
+@keyframes drawCircle { to { stroke-dashoffset: 0; } }
+@keyframes drawMark { to { stroke-dashoffset: 0; } }
+
+/* Animated gradient background (login) */
+.animated-bg {
+  background: linear-gradient(135deg, #0f172a, #1e293b, #0f766e, #1e293b, #0f172a);
+  background-size: 400% 400%;
+  animation: gradientShift 14s ease infinite;
+}
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Subtle pulse for call-to-action highlights */
+@keyframes softPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
+  50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+}
+.pulse-cta { animation: softPulse 2s ease-in-out infinite; }
+
+/* Running shop-name ticker */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ticker-track {
+  display: inline-flex;
+  white-space: nowrap;
+  will-change: transform;
+  animation: marquee 24s linear infinite;
+}
+.ticker-track:hover { animation-play-state: paused; }
+.ticker-fade {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+
 /* ---- Responsive helpers ---- */
 html { -webkit-text-size-adjust: 100%; }
 

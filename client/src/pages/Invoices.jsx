@@ -151,6 +151,12 @@ export default function Invoices() {
                   <span>Tax</span>
                   <span>{fmt(detail.invoice.tax_total)}</span>
                 </div>
+                {detail.invoice.item_discount > 0 && (
+                  <div className="flex justify-between">
+                    <span>Item Discount</span>
+                    <span>{fmt(detail.invoice.item_discount)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>Discount</span>
                   <span>{fmt(detail.invoice.discount)}</span>

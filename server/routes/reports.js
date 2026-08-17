@@ -2,132 +2,96 @@ const express = require('express');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
-router.use(authenticate);
-router.use(attachStore);
+router.use(authenticate, attachStore);
+
+const inRange = (dateStr, from, to) => {
+  const d = db.dateOf(dateStr);
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+};
 
 // Overview: revenue, profit (revenue - COGS), expenses, returns, net profit
-router.get('/summary', (req, res) => {
+router.get('/summary', asyncHandler(async (req, res) => {
   const { from, to } = req.query;
-  const params = [req.storeId];
-  let dateFilter = '';
-  if (from) {
-    dateFilter += ' AND date(created_at) >= date(?)';
-    params.push(from);
-  }
-  if (to) {
-    dateFilter += ' AND date(created_at) <= date(?)';
-    params.push(to);
-  }
+  const [invoices, allItems, expenses, returns] = await Promise.all([
+    db.all('invoices'),
+    db.all('invoice_items'),
+    db.all('expenses'),
+    db.all('returns'),
+  ]);
 
-  const sales = db
-    .prepare(
-      `SELECT COALESCE(SUM(grand_total), 0) AS revenue,
-              COALESCE(SUM(CASE WHEN status = 'credit' THEN grand_total - amount_paid ELSE 0 END), 0) AS pending,
-              COUNT(*) AS invoice_count
-       FROM invoices WHERE store_id = ?${dateFilter}`
-    )
-    .get(...params);
+  const storeInvoices = invoices.filter(
+    (i) => Number(i.store_id) === Number(req.storeId) && inRange(i.created_at, from, to)
+  );
+  const invoiceIds = new Set(storeInvoices.map((i) => i.id));
 
-  const cogs = db
-    .prepare(
-      `SELECT COALESCE(SUM(ii.qty * ii.cost_price), 0) AS cogs
-       FROM invoice_items ii
-       JOIN invoices i ON i.id = ii.invoice_id
-       WHERE i.store_id = ?${dateFilter}`
-    )
-    .get(...params);
-
-  const expParams = [req.storeId];
-  let expFilter = '';
-  if (from) {
-    expFilter += ' AND date(expense_date) >= date(?)';
-    expParams.push(from);
+  let revenue = 0;
+  let pending = 0;
+  for (const i of storeInvoices) {
+    revenue += i.grand_total || 0;
+    if (i.status === 'credit') pending += (i.grand_total || 0) - (i.amount_paid || 0);
   }
-  if (to) {
-    expFilter += ' AND date(expense_date) <= date(?)';
-    expParams.push(to);
-  }
-  const expenses = db
-    .prepare(
-      `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-       WHERE store_id = ?${expFilter}`
-    )
-    .get(...expParams);
-
-  const returnsTotal = db
-    .prepare(
-      `SELECT COALESCE(SUM(total_refund), 0) AS total FROM returns
-       WHERE store_id = ?${dateFilter}`
-    )
-    .get(...params);
+  const cogs = allItems
+    .filter((it) => invoiceIds.has(it.invoice_id))
+    .reduce((s, it) => s + (it.qty || 0) * (it.cost_price || 0), 0);
+  const expTotal = expenses
+    .filter((e) => Number(e.store_id) === Number(req.storeId) && inRange(e.expense_date, from, to))
+    .reduce((s, e) => s + (e.amount || 0), 0);
+  const returnsTotal = returns
+    .filter((r) => Number(r.store_id) === Number(req.storeId) && inRange(r.created_at, from, to))
+    .reduce((s, r) => s + (r.total_refund || 0), 0);
 
   res.json({
     summary: {
-      revenue: sales.revenue,
-      pending: sales.pending,
-      invoice_count: sales.invoice_count,
-      cogs: cogs.cogs,
-      gross_profit: Math.max(0, sales.revenue - returnsTotal.total - cogs.cogs),
-      expenses: expenses.total,
-      returns_total: returnsTotal.total,
-      net_profit: Math.max(0, sales.revenue - returnsTotal.total - cogs.cogs - expenses.total),
+      revenue,
+      pending,
+      invoice_count: storeInvoices.length,
+      cogs,
+      gross_profit: Math.max(0, revenue - returnsTotal - cogs),
+      expenses: expTotal,
+      returns_total: returnsTotal,
+      net_profit: Math.max(0, revenue - returnsTotal - cogs - expTotal),
     },
   });
-});
+}));
 
 // Daily revenue series for the charts
-router.get('/daily', (req, res) => {
+router.get('/daily', asyncHandler(async (req, res) => {
   const { from, to } = req.query;
-  const params = [req.storeId];
-  let dateFilter = '';
-  if (from) {
-    dateFilter += ' AND date(created_at) >= date(?)';
-    params.push(from);
-  }
-  if (to) {
-    dateFilter += ' AND date(created_at) <= date(?)';
-    params.push(to);
-  }
-  const days = db
-    .prepare(
-      `SELECT date(created_at) AS day,
-              COUNT(*) AS invoice_count,
-              COALESCE(SUM(grand_total), 0) AS revenue
-       FROM invoices WHERE store_id = ?${dateFilter}
-       GROUP BY date(created_at) ORDER BY day`
-    )
-    .all(...params);
+  const [invoices, expenses] = await Promise.all([
+    db.all('invoices'),
+    db.all('expenses'),
+  ]);
 
-  const expParams = [req.storeId];
-  let expFilter = '';
-  if (from) {
-    expFilter += ' AND date(expense_date) >= date(?)';
-    expParams.push(from);
+  const days = {};
+  for (const i of invoices) {
+    if (Number(i.store_id) !== Number(req.storeId) || !inRange(i.created_at, from, to)) continue;
+    const day = db.dateOf(i.created_at);
+    const cur = days[day] || { invoice_count: 0, revenue: 0 };
+    cur.invoice_count += 1;
+    cur.revenue += i.grand_total || 0;
+    days[day] = cur;
   }
-  if (to) {
-    expFilter += ' AND date(expense_date) <= date(?)';
-    expParams.push(to);
+  const expMap = {};
+  for (const e of expenses) {
+    if (Number(e.store_id) !== Number(req.storeId) || !inRange(e.expense_date, from, to)) continue;
+    const day = db.dateOf(e.expense_date);
+    expMap[day] = (expMap[day] || 0) + (e.amount || 0);
   }
-  const expenseDays = db
-    .prepare(
-      `SELECT date(expense_date) AS day, COALESCE(SUM(amount), 0) AS expenses
-       FROM expenses WHERE store_id = ?${expFilter}
-       GROUP BY date(expense_date)`
-    )
-    .all(...expParams);
-  const expMap = Object.fromEntries(expenseDays.map((e) => [e.day, e.expenses]));
 
-  // Fill gaps with zeroes
+  const dayKeys = Object.keys(days).sort();
   const result = [];
-  if (days.length > 0) {
-    const start = new Date(days[0].day);
-    const end = new Date(days[days.length - 1].day);
+  if (dayKeys.length > 0) {
+    const start = new Date(dayKeys[0]);
+    const end = new Date(dayKeys[dayKeys.length - 1]);
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const day = d.toISOString().slice(0, 10);
-      const found = days.find((r) => r.day === day);
+      const found = days[day];
       result.push({
         day,
         invoice_count: found ? found.invoice_count : 0,
@@ -137,129 +101,147 @@ router.get('/daily', (req, res) => {
     }
   }
   res.json({ days: result });
-});
+}));
 
 // Top selling products in range
-router.get('/top-products', (req, res) => {
+router.get('/top-products', asyncHandler(async (req, res) => {
   const { from, to, limit } = req.query;
   const n = Math.min(parseInt(limit) || 10, 50);
-  const params = [req.storeId];
-  let dateFilter = '';
-  if (from) {
-    dateFilter += ' AND date(i.created_at) >= date(?)';
-    params.push(from);
+  const [invoices, allItems, products, categories] = await Promise.all([
+    db.all('invoices'),
+    db.all('invoice_items'),
+    db.all('products'),
+    db.all('categories'),
+  ]);
+  const invoiceIds = new Set(
+    invoices
+      .filter((i) => Number(i.store_id) === Number(req.storeId) && inRange(i.created_at, from, to))
+      .map((i) => i.id)
+  );
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const agg = new Map();
+  for (const it of allItems) {
+    if (!invoiceIds.has(it.invoice_id)) continue;
+    const cur = agg.get(it.product_id) || { qty: 0, sales: 0 };
+    cur.qty += it.qty;
+    cur.sales += it.line_total || 0;
+    agg.set(it.product_id, cur);
   }
-  if (to) {
-    dateFilter += ' AND date(i.created_at) <= date(?)';
-    params.push(to);
-  }
-  const rows = db
-    .prepare(
-      `SELECT p.id, p.name, p.sku, c.name AS category_name,
-              COALESCE(SUM(ii.qty), 0) AS qty_sold,
-              COALESCE(SUM(ii.line_total), 0) AS sales_value
-       FROM invoice_items ii
-       JOIN invoices i ON i.id = ii.invoice_id
-       LEFT JOIN products p ON p.id = ii.product_id
-       LEFT JOIN categories c ON c.id = p.category_id
-       WHERE i.store_id = ?${dateFilter}
-       GROUP BY p.id ORDER BY qty_sold DESC LIMIT ?`
-    )
-    .all(...params.concat(n));
+  const rows = [...agg.entries()]
+    .map(([pid, v]) => {
+      const p = productMap.get(pid);
+      return {
+        id: pid,
+        name: p ? p.name : 'Item',
+        sku: p ? p.sku : null,
+        category_name: p && p.category_id && catMap.get(p.category_id) ? catMap.get(p.category_id).name : null,
+        qty_sold: v.qty,
+        sales_value: v.sales,
+      };
+    })
+    .sort((a, b) => b.qty_sold - a.qty_sold)
+    .slice(0, n);
   res.json({ products: rows });
-});
+}));
 
 // Payment mode breakdown
-router.get('/payment-modes', (req, res) => {
+router.get('/payment-modes', asyncHandler(async (req, res) => {
   const { from, to } = req.query;
-  const params = [req.storeId];
-  let dateFilter = '';
-  if (from) {
-    dateFilter += ' AND date(created_at) >= date(?)';
-    params.push(from);
+  const invoices = await db.all('invoices');
+  const agg = new Map();
+  for (const i of invoices) {
+    if (Number(i.store_id) !== Number(req.storeId) || !inRange(i.created_at, from, to)) continue;
+    const mode = i.payment_mode || 'cash';
+    const cur = agg.get(mode) || { count: 0, total: 0 };
+    cur.count += 1;
+    cur.total += i.grand_total || 0;
+    agg.set(mode, cur);
   }
-  if (to) {
-    dateFilter += ' AND date(created_at) <= date(?)';
-    params.push(to);
-  }
-  const rows = db
-    .prepare(
-      `SELECT payment_mode, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
-       FROM invoices WHERE store_id = ?${dateFilter}
-       GROUP BY payment_mode ORDER BY total DESC`
-    )
-    .all(...params);
-  res.json({ modes: rows });
-});
+  const modes = [...agg.entries()]
+    .map(([mode, v]) => ({ payment_mode: mode, count: v.count, total: v.total }))
+    .sort((a, b) => b.total - a.total);
+  res.json({ modes });
+}));
 
 // Expenses grouped by category
-router.get('/expense-breakdown', (req, res) => {
+router.get('/expense-breakdown', asyncHandler(async (req, res) => {
   const { from, to } = req.query;
-  const params = [req.storeId];
-  let filter = '';
-  if (from) {
-    filter += ' AND date(expense_date) >= date(?)';
-    params.push(from);
+  const expenses = await db.all('expenses');
+  const agg = new Map();
+  for (const e of expenses) {
+    if (Number(e.store_id) !== Number(req.storeId) || !inRange(e.expense_date, from, to)) continue;
+    const cur = agg.get(e.category) || { total: 0, count: 0 };
+    cur.total += e.amount || 0;
+    cur.count += 1;
+    agg.set(e.category, cur);
   }
-  if (to) {
-    filter += ' AND date(expense_date) <= date(?)';
-    params.push(to);
-  }
-  const rows = db
-    .prepare(
-      `SELECT category, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count
-       FROM expenses WHERE store_id = ?${filter}
-       GROUP BY category ORDER BY total DESC`
-    )
-    .all(...params);
-  res.json({ breakdown: rows });
-});
+  const breakdown = [...agg.entries()]
+    .map(([category, v]) => ({ category, total: v.total, count: v.count }))
+    .sort((a, b) => b.total - a.total);
+  res.json({ breakdown });
+}));
 
 // Profit by product + daily profit series
-router.get('/profit', (req, res) => {
+router.get('/profit', asyncHandler(async (req, res) => {
   const { from, to } = req.query;
-  const params = [req.storeId];
-  let dateFilter = '';
-  if (from) {
-    dateFilter += ' AND date(i.created_at) >= date(?)';
-    params.push(from);
+  const [invoices, allItems, products, categories] = await Promise.all([
+    db.all('invoices'),
+    db.all('invoice_items'),
+    db.all('products'),
+    db.all('categories'),
+  ]);
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const storeInvoices = invoices.filter(
+    (i) => Number(i.store_id) === Number(req.storeId) && inRange(i.created_at, from, to)
+  );
+  const invoiceSet = new Set(storeInvoices.map((i) => i.id));
+
+  const productAgg = new Map();
+  const dailyAgg = new Map();
+  const dayOfInvoice = new Map(storeInvoices.map((i) => [i.id, db.dateOf(i.created_at)]));
+  for (const it of allItems) {
+    if (!invoiceSet.has(it.invoice_id)) continue;
+    const sales = it.line_total || 0;
+    const cogs = (it.qty || 0) * (it.cost_price || 0);
+    const profit = sales - cogs;
+    const pa = productAgg.get(it.product_id) || { qty: 0, sales: 0, cogs: 0, profit: 0 };
+    pa.qty += it.qty;
+    pa.sales += sales;
+    pa.cogs += cogs;
+    pa.profit += profit;
+    productAgg.set(it.product_id, pa);
+
+    const day = dayOfInvoice.get(it.invoice_id);
+    const da = dailyAgg.get(day) || { sales: 0, cogs: 0, profit: 0 };
+    da.sales += sales;
+    da.cogs += cogs;
+    da.profit += profit;
+    dailyAgg.set(day, da);
   }
-  if (to) {
-    dateFilter += ' AND date(i.created_at) <= date(?)';
-    params.push(to);
-  }
 
-  const products = db
-    .prepare(
-      `SELECT p.id, p.name, p.sku, c.name AS category_name,
-              COALESCE(SUM(ii.qty), 0) AS qty_sold,
-              COALESCE(SUM(ii.line_total), 0) AS sales_value,
-              COALESCE(SUM(ii.qty * ii.cost_price), 0) AS cogs,
-              COALESCE(SUM(ii.line_total), 0) - COALESCE(SUM(ii.qty * ii.cost_price), 0) AS profit
-       FROM invoice_items ii
-       JOIN invoices i ON i.id = ii.invoice_id
-       LEFT JOIN products p ON p.id = ii.product_id
-       LEFT JOIN categories c ON c.id = p.category_id
-       WHERE i.store_id = ?${dateFilter}
-       GROUP BY p.id
-       ORDER BY profit DESC`
-    )
-    .all(...params);
+  const productsResult = [...productAgg.entries()]
+    .map(([pid, v]) => {
+      const p = productMap.get(pid);
+      return {
+        id: pid,
+        name: p ? p.name : 'Item',
+        sku: p ? p.sku : null,
+        category_name: p && p.category_id && catMap.get(p.category_id) ? catMap.get(p.category_id).name : null,
+        qty_sold: v.qty,
+        sales_value: v.sales,
+        cogs: v.cogs,
+        profit: v.profit,
+      };
+    })
+    .sort((a, b) => b.profit - a.profit);
 
-  const daily = db
-    .prepare(
-      `SELECT date(i.created_at) AS day,
-              COALESCE(SUM(ii.line_total), 0) AS sales_value,
-              COALESCE(SUM(ii.qty * ii.cost_price), 0) AS cogs,
-              COALESCE(SUM(ii.line_total), 0) - COALESCE(SUM(ii.qty * ii.cost_price), 0) AS profit
-       FROM invoice_items ii
-       JOIN invoices i ON i.id = ii.invoice_id
-       WHERE i.store_id = ?${dateFilter}
-       GROUP BY date(i.created_at) ORDER BY day`
-    )
-    .all(...params);
+  const daily = [...dailyAgg.entries()]
+    .map(([day, v]) => ({ day, ...v }))
+    .sort((a, b) => (a.day < b.day ? -1 : 1));
 
-  res.json({ products, daily });
-});
+  res.json({ products: productsResult, daily });
+}));
 
 module.exports = router;

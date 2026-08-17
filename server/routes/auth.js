@@ -1,106 +1,132 @@
 const express = require('express');
 const db = require('../db');
-const { hashPassword, verifyPassword, signToken } = require('../utils/auth');
+const { signInWithPassword, createUser, ensureServerToken } = require('../utils/auth');
+const { storage } = require('../fb/context');
 const { authenticate, authorize } = require('../middleware/auth');
 const { logActivity } = require('../utils/activity');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
-router.post('/login', (req, res) => {
+// Sign in with Firebase Auth. Accepts an email or a username (the username
+// is resolved to the stored email first).
+router.post('/login', asyncHandler(async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password required' });
+    return res.status(400).json({ error: 'Email/username and password required' });
   }
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!user || !user.active || !verifyPassword(password, user.password_hash)) {
+  let email = String(username).trim();
+  if (!email.includes('@')) {
+    // Reads before authentication use the server-held admin token
+    const token = await ensureServerToken();
+    const users = await storage.run(token, () => db.all('users'));
+    const found = users.find(
+      (u) => (u.username || '').toLowerCase() === email.toLowerCase()
+    );
+    if (!found || !found.email) return res.status(401).json({ error: 'Invalid credentials' });
+    email = found.email;
+  }
+  let rec;
+  try {
+    rec = await signInWithPassword(email, password);
+  } catch (e) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
-  const token = signToken({
-    id: user.id,
-    username: user.username,
-    name: user.name,
-    role: user.role,
-    store_id: user.store_id,
+  return storage.run(rec.idToken, async () => {
+    const user = await db.get('users', rec.localId);
+    if (!user || !user.active) return res.status(401).json({ error: 'Invalid credentials' });
+    logActivity(user, 'login', `${user.name} signed in`, user.store_id);
+    res.json({
+      token: rec.idToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        store_id: user.store_id,
+      },
+    });
   });
-  logActivity(user, 'login', `${user.name} signed in`);
-  res.json({
-    token,
-    user: {
-      id: user.id,
-      name: user.name,
-      username: user.username,
-      role: user.role,
-      store_id: user.store_id,
-    },
-  });
-});
+}));
 
-router.get('/me', authenticate, (req, res) => {
-  const user = db
-    .prepare(
-      `SELECT u.id, u.name, u.username, u.role, u.active, u.store_id, u.created_at,
-              s.name AS store_name
-       FROM users u LEFT JOIN stores s ON s.id = u.store_id
-       WHERE u.id = ?`
-    )
-    .get(req.user.id);
+router.get('/me', authenticate, asyncHandler(async (req, res) => {
+  const user = await db.get('users', req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ user });
-});
+  const store = user.store_id ? await db.get('stores', user.store_id) : null;
+  res.json({ user: { ...user, store_name: store ? store.name : null } });
+}));
 
-router.post('/register', authenticate, authorize('admin'), (req, res) => {
-  const { name, username, password, role, store_id } = req.body || {};
-  if (!name || !username || !password) {
-    return res.status(400).json({ error: 'name, username, password required' });
+router.post('/register', authenticate, authorize('admin'), asyncHandler(async (req, res) => {
+  const { name, username, email, password, role, store_id } = req.body || {};
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'name, email, password required' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+  if (String(password).length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
   const allowedRoles = ['admin', 'cashier', 'inventory'];
   const userRole = allowedRoles.includes(role) ? role : 'cashier';
   const userStoreId = Number(store_id) || req.user.store_id || 1;
-  const store = db.prepare('SELECT id FROM stores WHERE id = ?').get(userStoreId);
+  const store = await db.get('stores', userStoreId);
   if (!store) return res.status(400).json({ error: 'Invalid store' });
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-  if (existing) return res.status(409).json({ error: 'Username already exists' });
-  const info = db
-    .prepare('INSERT INTO users (name, username, password_hash, role, store_id) VALUES (?,?,?,?,?)')
-    .run(name, username, hashPassword(password), userRole, userStoreId);
-  logActivity(req.user, 'user_created', `Created user "${username}" (${userRole})`);
-  res.status(201).json({ id: info.lastInsertRowid, name, username, role: userRole, store_id: userStoreId });
-});
+  const users = await db.all('users');
+  if (users.some((u) => (u.email || '').toLowerCase() === email.toLowerCase())) {
+    return res.status(409).json({ error: 'Email already exists' });
+  }
+  let rec;
+  try {
+    rec = await createUser(email, password);
+  } catch (e) {
+    if (e.code === 'EMAIL_EXISTS') return res.status(409).json({ error: 'Email already exists' });
+    return res.status(400).json({ error: e.message });
+  }
+  const user = {
+    id: rec.localId,
+    name,
+    username: username || null,
+    email,
+    role: userRole,
+    active: 1,
+    store_id: userStoreId,
+    created_at: db.now(),
+  };
+  await db.set('users', rec.localId, user);
+  logActivity(req.user, 'user_created', `Created user "${name}" (${userRole})`, req.storeId);
+  res.status(201).json({ id: rec.localId, name, username: user.username, email, role: userRole, store_id: userStoreId });
+}));
 
-router.get('/users', authenticate, authorize('admin'), (req, res) => {
-  const users = db
-    .prepare(
-      `SELECT u.id, u.name, u.username, u.role, u.active, u.store_id, u.created_at,
-              s.name AS store_name
-       FROM users u LEFT JOIN stores s ON s.id = u.store_id
-       ORDER BY u.id`
-    )
-    .all();
-  res.json({ users });
-});
+router.get('/users', authenticate, authorize('admin'), asyncHandler(async (req, res) => {
+  const [users, stores] = await Promise.all([db.all('users'), db.all('stores')]);
+  const storeMap = Object.fromEntries(stores.map((s) => [s.id, s]));
+  res.json({
+    users: users.map((u) => ({
+      ...u,
+      store_name: u.store_id && storeMap[u.store_id] ? storeMap[u.store_id].name : null,
+    })),
+  });
+}));
 
-router.patch('/users/:id', authenticate, authorize('admin'), (req, res) => {
+router.patch('/users/:id', authenticate, authorize('admin'), asyncHandler(async (req, res) => {
   const { active, store_id } = req.body || {};
-  const sets = [];
-  const params = [];
-  if (active !== undefined) {
-    sets.push('active = ?');
-    params.push(active ? 1 : 0);
-  }
+  const patch = {};
+  if (active !== undefined) patch.active = active ? 1 : 0;
   if (store_id !== undefined) {
-    const store = db.prepare('SELECT id FROM stores WHERE id = ?').get(store_id);
+    const store = await db.get('stores', Number(store_id));
     if (!store) return res.status(400).json({ error: 'Invalid store' });
-    sets.push('store_id = ?');
-    params.push(Number(store_id));
+    patch.store_id = Number(store_id);
   }
-  if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' });
-  params.push(req.params.id);
-  const info = db
-    .prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`)
-    .run(...params);
-  if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
-  logActivity(req.user, 'user_updated', `Updated user id ${req.params.id}`, req.storeId);
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'Nothing to update' });
+  }
+  const existing = await db.get('users', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'User not found' });
+  await db.update('users', req.params.id, patch);
+  logActivity(req.user, 'user_updated', `Updated user ${existing.name}`, req.storeId);
   res.json({ success: true });
-});
+}));
 
 module.exports = router;

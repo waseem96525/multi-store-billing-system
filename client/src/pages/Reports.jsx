@@ -166,7 +166,7 @@ export default function Reports() {
         {cards.map((c) => (
           <div key={c.label} className="bg-white rounded-lg shadow p-4">
             <div className="text-xs text-slate-500">{c.label}</div>
-            <div className={`text-lg font-bold ${c.color}`}>{c.value}</div>
+            <div className={`text-lg font-bold break-words ${c.color}`}>{c.value}</div>
           </div>
         ))}
       </div>

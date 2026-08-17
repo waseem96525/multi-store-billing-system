@@ -17,6 +17,7 @@ const reportRoutes = require('./routes/reports');
 const transferRoutes = require('./routes/transfers');
 const activityRoutes = require('./routes/activity');
 const exportRoutes = require('./routes/export');
+const importRoutes = require('./routes/import');
 const backupRoutes = require('./routes/backup');
 
 require('./db'); // initialize database + seed admin
@@ -44,13 +45,19 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/transfers', transferRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/import', importRoutes);
 app.use('/api/backup', backupRoutes);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   // eslint-disable-next-line no-console
   console.error(err);
-  res.status(500).json({ error: 'Internal server error' });
+  const status = err.status || 500;
+  if (status === 500) {
+    res.status(500).json({ error: 'Internal server error' });
+  } else {
+    res.status(status).json({ error: err.message });
+  }
 });
 
 // Serve the built client (SPA) when available. Used for local production

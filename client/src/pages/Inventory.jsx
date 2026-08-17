@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   listProducts,
   createProduct,
@@ -11,6 +11,8 @@ import {
 } from '../api/products';
 import { printLabels } from '../utils/print';
 import { exportCsv } from '../api/export';
+import { importProducts } from '../api/import';
+import { parseCsv, csvToObjects } from '../utils/csv';
 
 const EMPTY = {
   name: '',
@@ -22,6 +24,7 @@ const EMPTY = {
   selling_price: 0,
   mrp: 0,
   tax_percent: 0,
+  discount_pct: 0,
   stock_qty: 0,
   reorder_level: 0,
   description: '',
@@ -46,6 +49,46 @@ export default function Inventory() {
   const [showLabels, setShowLabels] = useState(false);
   const [labelSel, setLabelSel] = useState({});
   const [labelCopies, setLabelCopies] = useState(1);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importMode, setImportMode] = useState('add');
+  const [importResult, setImportResult] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+
+  const formRef = useRef(null);
+  const scrollForm = (dir) => {
+    const el = formRef.current;
+    if (!el) return;
+    el.scrollTo({ top: dir === 'bottom' ? el.scrollHeight : 0, behavior: 'smooth' });
+  };
+
+  const panelRef = useRef(null);
+  const dragOrigin = useRef(null);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+
+  const startDrag = (e) => {
+    dragOrigin.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y };
+    setDragging(true);
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (e) => {
+      const d = dragOrigin.current;
+      if (!d) return;
+      setPos({ x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) });
+    };
+    const up = () => setDragging(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+  }, [dragging]);
 
   const load = async () => {
     try {
@@ -69,6 +112,7 @@ export default function Inventory() {
   const openAdd = () => {
     setEditing(null);
     setForm(EMPTY);
+    setPos({ x: 0, y: 0 });
     setShowForm(true);
   };
 
@@ -84,6 +128,7 @@ export default function Inventory() {
       selling_price: p.selling_price,
       mrp: p.mrp || 0,
       tax_percent: p.tax_percent,
+      discount_pct: p.discount_pct || 0,
       stock_qty: p.stock_qty,
       reorder_level: p.reorder_level,
       description: p.description || '',
@@ -92,6 +137,7 @@ export default function Inventory() {
       expiry_date: p.expiry_date || '',
       location: p.location || '',
     });
+    setPos({ x: 0, y: 0 });
     setShowForm(true);
   };
 
@@ -106,6 +152,7 @@ export default function Inventory() {
         selling_price: Number(form.selling_price),
         mrp: Number(form.mrp),
         tax_percent: Number(form.tax_percent),
+        discount_pct: Number(form.discount_pct),
         stock_qty: Number(form.stock_qty),
         reorder_level: Number(form.reorder_level),
       };
@@ -195,11 +242,49 @@ export default function Inventory() {
     printLabels(items);
   };
 
+  const openImport = () => {
+    setShowImport(true);
+    setImportText('');
+    setImportMode('add');
+    setImportResult(null);
+    setImportError('');
+  };
+
+  const handleImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setImportText(String(reader.result || ''));
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleImport = async () => {
+    setImportError('');
+    setImportResult(null);
+    const parsed = parseCsv(importText);
+    if (parsed.length < 2) {
+      setImportError('CSV needs a header row and at least one data row');
+      return;
+    }
+    const rows = csvToObjects(parsed);
+    setImporting(true);
+    try {
+      const res = await importProducts(rows, importMode);
+      setImportResult(res);
+      load();
+    } catch (err) {
+      setImportError(err.response?.data?.error || 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-slate-800">Inventory</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
             onClick={() => setShowCategories(true)}
@@ -218,6 +303,13 @@ export default function Inventory() {
             title="Download inventory as CSV"
           >
             Export CSV
+          </button>
+          <button
+            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+            onClick={openImport}
+            title="Bulk load products and stock from a CSV file"
+          >
+            Import CSV
           </button>
           <button
             className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700"
@@ -259,6 +351,7 @@ export default function Inventory() {
               <th className="p-2 text-right">Price</th>
               <th className="p-2 text-right">MRP</th>
               <th className="p-2 text-right">Tax%</th>
+              <th className="p-2 text-right">Disc%</th>
               <th className="p-2 text-right">Stock</th>
               <th className="p-2 text-right">Reorder</th>
               <th className="p-2"></th>
@@ -275,6 +368,9 @@ export default function Inventory() {
                 <td className="p-2 text-right">{p.selling_price}</td>
                 <td className="p-2 text-right">{p.mrp || '-'}</td>
                 <td className="p-2 text-right">{p.tax_percent}</td>
+                <td className={`p-2 text-right ${p.discount_pct > 0 ? 'text-emerald-600 font-semibold' : ''}`}>
+                  {p.discount_pct > 0 ? p.discount_pct : '-'}
+                </td>
                 <td className={`p-2 text-right ${p.stock_qty <= p.reorder_level ? 'text-red-600 font-semibold' : ''}`}>
                   {p.stock_qty}
                 </td>
@@ -291,7 +387,7 @@ export default function Inventory() {
             ))}
             {products.length === 0 && (
               <tr>
-                <td colSpan={11} className="p-4 text-center text-slate-400">
+                <td colSpan={12} className="p-4 text-center text-slate-400">
                   No products found
                 </td>
               </tr>
@@ -302,13 +398,25 @@ export default function Inventory() {
 
       {showForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <form
-            onSubmit={handleSubmit}
-            className="bg-white p-5 rounded-lg w-[min(92vw,24rem)] max-h-[90vh] overflow-auto space-y-2"
+          <div
+            ref={panelRef}
+            style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+            className="relative w-[min(92vw,24rem)]"
           >
-            <h2 className="font-bold text-lg mb-2">
-              {editing ? 'Edit Product' : 'Add Product'}
-            </h2>
+            <form
+              ref={formRef}
+              onSubmit={handleSubmit}
+              className="bg-white p-5 rounded-lg max-h-[90vh] overflow-auto space-y-2"
+            >
+            <div
+              className="flex items-center justify-between mb-2 cursor-move select-none touch-none"
+              onPointerDown={startDrag}
+            >
+              <h2 className="font-bold text-lg">
+                {editing ? 'Edit Product' : 'Add Product'}
+              </h2>
+              <span className="text-xs text-slate-400">⠿ drag</span>
+            </div>
             <input
               className="w-full border rounded px-2 py-1"
               placeholder="Name *"
@@ -429,6 +537,30 @@ export default function Inventory() {
                 />
               </label>
               <label className="text-xs text-slate-500">
+                Item Discount % (auto-applied in POS)
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Number(form.discount_pct) || 0}
+                    onChange={(e) => setForm({ ...form, discount_pct: Number(e.target.value) })}
+                    className="flex-1 accent-emerald-600"
+                  />
+                  <span className="w-12 text-right font-semibold text-emerald-700">
+                    {Number(form.discount_pct) || 0}%
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="w-full border rounded px-2 py-1 mt-1"
+                  value={form.discount_pct}
+                  onChange={(e) => setForm({ ...form, discount_pct: e.target.value })}
+                />
+              </label>
+              <label className="text-xs text-slate-500">
                 Stock Qty
                 <input
                   type="number"
@@ -464,6 +596,27 @@ export default function Inventory() {
               </button>
             </div>
           </form>
+
+          {/* Floating scroll helpers for the tall product form */}
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-10">
+            <button
+              type="button"
+              onClick={() => scrollForm('top')}
+              title="Scroll to top"
+              className="w-9 h-9 rounded-full bg-slate-800 text-white shadow-lg flex items-center justify-center hover:bg-slate-700"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollForm('bottom')}
+              title="Scroll to bottom"
+              className="w-9 h-9 rounded-full bg-emerald-600 text-white shadow-lg flex items-center justify-center hover:bg-emerald-700"
+            >
+              ↓
+            </button>
+          </div>
+          </div>
         </div>
       )}
       {showCategories && (
@@ -489,9 +642,9 @@ export default function Inventory() {
               {categories.map((c) => (
                 <div
                   key={c.id}
-                  className="flex items-center justify-between border rounded px-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-2 border rounded px-3 py-2"
                 >
-                  <span>{c.name}</span>
+                  <span className="truncate min-w-0">{c.name}</span>
                   <div className="space-x-2">
                     <button
                       className="text-blue-600 text-sm"
@@ -524,8 +677,7 @@ export default function Inventory() {
         </div>
       )}
 
-      {showLabels && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      {showLabels && (        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white p-5 rounded-lg w-[min(92vw,26rem)] max-h-[90vh] overflow-auto space-y-3">
             <h2 className="font-bold text-lg">Print Barcode Labels</h2>
             <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -591,6 +743,111 @@ export default function Inventory() {
                 onClick={() => setShowLabels(false)}
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showImport && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white p-5 rounded-lg w-[min(92vw,32rem)] max-h-[90vh] overflow-auto space-y-3">
+            <h2 className="font-bold text-lg">Bulk Import Products / Stock</h2>
+            <p className="text-xs text-slate-500">
+              Paste CSV or upload a file. Columns are matched by header name (e.g.{' '}
+              <code>Name</code>, <code>SKU</code>, <code>Barcode</code>, <code>Category</code>,{' '}
+              <code>Cost Price</code>, <code>Selling Price</code>, <code>MRP</code>,{' '}
+              <code>Tax %</code>, <code>Stock</code>, <code>Reorder Level</code>). Existing
+              products are matched by barcode, SKU or name; missing ones are created. Tip: use
+              <button
+                className="text-blue-600 underline ml-1"
+                onClick={() =>
+                  exportCsv('products').catch((e) =>
+                    setImportError(e.response?.data?.error || 'Download failed')
+                  )
+                }
+              >
+                Export CSV
+              </button>
+              as a template.
+            </p>
+
+            <div className="flex items-center gap-3 text-sm text-slate-600">
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === 'add'}
+                  onChange={() => setImportMode('add')}
+                />
+                Add to existing stock
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === 'set'}
+                  onChange={() => setImportMode('set')}
+                />
+                Set exact stock
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-xs text-slate-500">Or choose a CSV file</span>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="block w-full text-sm border rounded px-2 py-1.5"
+                onChange={handleImportFile}
+              />
+            </label>
+
+            <textarea
+              className="w-full border rounded px-2 py-1 font-mono text-xs h-40"
+              placeholder={'Name,SKU,Barcode,Category,Unit,Cost Price,Selling Price,Stock,Reorder Level\nRice 5kg,RICE5,8901234567,Grains,bag,1800,2100,50,10'}
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+            />
+
+            {importError && <div className="text-red-600 text-sm">{importError}</div>}
+
+            {importResult && (
+              <div className="text-sm border rounded p-3 space-y-1">
+                <div className="font-semibold text-slate-700">Import complete</div>
+                <div className="text-green-600">
+                  {importResult.summary.created} created, {importResult.summary.updated} updated
+                </div>
+                {importResult.summary.failed > 0 && (
+                  <div className="text-red-600">{importResult.summary.failed} failed</div>
+                )}
+                {importResult.results.filter((r) => r.status === 'error').length > 0 && (
+                  <div className="max-h-32 overflow-auto border-t pt-1 mt-1">
+                    {importResult.results
+                      .filter((r) => r.status === 'error')
+                      .map((r, i) => (
+                        <div key={i} className="text-red-600 text-xs">
+                          Row {r.row}: {r.name || '?'} - {r.error}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                onClick={handleImport}
+                disabled={importing || !importText.trim()}
+              >
+                {importing ? 'Importing...' : 'Import'}
+              </button>
+              <button
+                className="flex-1 border py-2 rounded"
+                onClick={() => setShowImport(false)}
+              >
+                Close
               </button>
             </div>
           </div>

@@ -319,7 +319,7 @@ export default function Purchases() {
       {/* New supplier modal */}
       {showSupplierModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <form onSubmit={handleCreateSupplier} className="bg-white p-5 rounded-lg w-[min(92vw,20rem)] space-y-2">
+          <form onSubmit={handleCreateSupplier} className="bg-white p-5 rounded-lg w-[min(92vw,20rem)] max-h-[90vh] overflow-auto space-y-2">
             <h2 className="font-bold">New Supplier</h2>
             <input className="w-full border rounded px-2 py-1" placeholder="Name *" required
               value={supForm.name} onChange={(e) => setSupForm({ ...supForm, name: e.target.value })} />

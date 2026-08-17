@@ -2,50 +2,66 @@ const express = require('express');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
 router.use(authenticate, attachStore);
 
-router.get('/', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const salesToday = db
-    .prepare(
-      'SELECT COALESCE(SUM(grand_total),0) AS total, COUNT(*) AS count FROM invoices WHERE date(created_at) = ? AND store_id = ?'
-    )
-    .get(today, req.storeId);
-  const lowStock = db
-    .prepare(
-      'SELECT COUNT(*) AS c FROM product_stock WHERE store_id = ? AND stock_qty <= reorder_level'
-    )
-    .get(req.storeId).c;
-  const lowStockItems = db
-    .prepare(
-      `SELECT ps.stock_qty, ps.reorder_level, p.id, p.name FROM product_stock ps
-       LEFT JOIN products p ON p.id = ps.product_id
-       WHERE ps.store_id = ? AND ps.stock_qty <= ps.reorder_level
-       ORDER BY ps.stock_qty ASC LIMIT 10`
-    )
-    .all(req.storeId);
-  const totalProducts = db
-    .prepare(
-      'SELECT COUNT(*) AS c FROM product_stock WHERE store_id = ?'
-    )
-    .get(req.storeId).c;
-  const topProducts = db
-    .prepare(
-      `SELECT p.name, SUM(ii.qty) AS qty_sold, SUM(ii.line_total) AS revenue
-       FROM invoices i
-       JOIN invoice_items ii ON ii.invoice_id = i.id
-       JOIN products p ON p.id = ii.product_id
-       WHERE i.store_id = ? AND i.created_at >= datetime('now', '-30 days')
-       GROUP BY p.id ORDER BY revenue DESC LIMIT 5`
-    )
-    .all(req.storeId);
-  const outstandingPayables = db
-    .prepare('SELECT COALESCE(SUM(outstanding_balance),0) AS total FROM suppliers')
-    .get().total;
-  res.json({ salesToday, lowStock, lowStockItems, totalProducts, topProducts, outstandingPayables });
-});
+router.get('/', asyncHandler(async (req, res) => {
+  const today = db.today();
+  const [invoices, stockRows, suppliers] = await Promise.all([
+    db.all('invoices'),
+    db.where('product_stock', (r) => Number(r.store_id) === Number(req.storeId)),
+    db.all('suppliers'),
+  ]);
+
+  const storeInvoices = invoices.filter((i) => Number(i.store_id) === Number(req.storeId));
+  const salesTodayList = storeInvoices.filter((i) => db.dateOf(i.created_at) === today);
+  const salesToday = {
+    total: salesTodayList.reduce((s, i) => s + (i.grand_total || 0), 0),
+    count: salesTodayList.length,
+  };
+
+  const lowStockRows = stockRows.filter((r) => r.stock_qty <= r.reorder_level);
+  const lowStockItems = lowStockRows
+    .sort((a, b) => a.stock_qty - b.stock_qty)
+    .slice(0, 10);
+
+  const [products, items] = await Promise.all([db.all('products'), db.all('invoice_items')]);
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const recent = new Set(
+    storeInvoices.filter((i) => db.dateOf(i.created_at) >= cutoff).map((i) => i.id)
+  );
+  const sold = new Map();
+  for (const it of items) {
+    if (!recent.has(it.invoice_id)) continue;
+    const cur = sold.get(it.product_id) || { qty: 0, revenue: 0 };
+    cur.qty += it.qty;
+    cur.revenue += it.line_total || 0;
+    sold.set(it.product_id, cur);
+  }
+  const topProducts = [...sold.entries()]
+    .map(([pid, v]) => ({ name: productMap.get(pid) ? productMap.get(pid).name : 'Item', ...v }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+
+  const outstandingPayables = suppliers.reduce((s, sup) => s + (sup.outstanding_balance || 0), 0);
+
+  res.json({
+    salesToday,
+    lowStock: lowStockRows.length,
+    lowStockItems: lowStockItems.map((r) => ({
+      stock_qty: r.stock_qty,
+      reorder_level: r.reorder_level,
+      id: r.product_id,
+      name: productMap.get(r.product_id) ? productMap.get(r.product_id).name : null,
+    })),
+    totalProducts: stockRows.length,
+    topProducts,
+    outstandingPayables,
+  });
+}));
 
 module.exports = router;

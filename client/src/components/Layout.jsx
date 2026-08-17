@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '../store/slices/authSlice';
-import { setStores, setCurrentStore } from '../store/slices/storeSlice';
-import { listStores } from '../api/stores';
+import { setStores, setCurrentStore, setCurrentStoreInfo } from '../store/slices/storeSlice';
+import { listStores, getCurrentStore } from '../api/stores';
 import { getTheme, toggleTheme } from '../utils/theme';
+import ForestBackground from './ForestBackground';
+import TickerBar from './TickerBar';
 
 export default function Layout() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const [dark, setDark] = useState(getTheme() === 'dark');
   const user = useSelector((s) => s.auth.user);
   const stores = useSelector((s) => s.store.stores);
+  const currentStore = useSelector((s) => s.store.currentStore);
   const currentStoreId = useSelector((s) => s.store.currentStoreId);
 
   useEffect(() => {
@@ -22,6 +26,19 @@ export default function Layout() {
         .catch(() => {});
     }
   }, [user, dispatch]);
+
+  // Load the current store's live details (name, etc.) for all roles so the
+  // shop-name ticker reflects Shop Settings immediately.
+  useEffect(() => {
+    getCurrentStore()
+      .then(({ store }) => dispatch(setCurrentStoreInfo(store)))
+      .catch(() => {});
+  }, [dispatch]);
+
+  const storeName =
+    currentStore?.name ||
+    stores.find((s) => s.id === currentStoreId)?.name ||
+    'Retail Shop';
 
   const handleLogout = () => {
     dispatch(logout());
@@ -44,8 +61,8 @@ export default function Layout() {
   );
 
   const navClass = ({ isActive }) =>
-    `block px-3 py-2 rounded-md text-sm font-medium ${
-      isActive ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+    `nav-link relative block px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+      isActive ? 'nav-active text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
     }`;
 
   const storeSwitcher =
@@ -139,7 +156,8 @@ export default function Layout() {
   );
 
   return (
-    <div className="flex h-screen bg-slate-100">
+    <div className="flex h-screen bg-transparent">
+      <ForestBackground />
       {/* Mobile top bar */}
       <header className="lg:hidden fixed top-0 inset-x-0 z-40 bg-slate-800 text-white flex items-center justify-between px-3 py-2.5 shadow">
         <button
@@ -190,8 +208,11 @@ export default function Layout() {
         {sidebarContent}
       </aside>
 
-      <main className="flex-1 overflow-auto p-4 pt-14 lg:p-6 lg:pt-6">
-        <Outlet />
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pt-14 lg:pt-0">
+        <TickerBar name={storeName} />
+        <div key={location.pathname} className="animate-route p-4 lg:p-6">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

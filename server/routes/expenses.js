@@ -3,55 +3,48 @@ const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity } = require('../utils/activity');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
-router.use(authenticate);
-router.use(attachStore);
+router.use(authenticate, attachStore);
 
-router.get('/', (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const { from, to, category } = req.query;
-  let sql = 'SELECT e.*, u.name AS created_by_name FROM expenses e LEFT JOIN users u ON u.id = e.created_by WHERE e.store_id = ?';
-  const params = [req.storeId];
-  if (from) {
-    sql += ' AND date(e.expense_date) >= date(?)';
-    params.push(from);
-  }
-  if (to) {
-    sql += ' AND date(e.expense_date) <= date(?)';
-    params.push(to);
-  }
-  if (category) {
-    sql += ' AND e.category = ?';
-    params.push(category);
-  }
-  sql += ' ORDER BY e.expense_date DESC, e.id DESC';
-  const expenses = db.prepare(sql).all(...params);
-  const categories = db
-    .prepare('SELECT DISTINCT category FROM expenses WHERE store_id = ? ORDER BY category')
-    .all(req.storeId)
-    .map((r) => r.category);
-  res.json({ expenses, categories });
-});
+  let expenses = await db.where('expenses', (e) => Number(e.store_id) === Number(req.storeId));
+  if (from) expenses = expenses.filter((e) => db.dateOf(e.expense_date) >= from);
+  if (to) expenses = expenses.filter((e) => db.dateOf(e.expense_date) <= to);
+  if (category) expenses = expenses.filter((e) => e.category === category);
+  expenses.sort((a, b) => {
+    const c = String(b.expense_date).localeCompare(String(a.expense_date));
+    return c !== 0 ? c : b.id - a.id;
+  });
 
-router.post('/', authorize('admin', 'inventory'), (req, res) => {
+  const [users, all] = await Promise.all([db.all('users'), db.where('expenses', (e) => Number(e.store_id) === Number(req.storeId))]);
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const categoriesList = [...new Set(all.map((e) => e.category))].sort();
+  res.json({
+    expenses: expenses.map((e) => ({
+      ...e,
+      created_by_name: e.created_by && userMap.get(e.created_by) ? userMap.get(e.created_by).name : null,
+    })),
+    categories: categoriesList,
+  });
+}));
+
+router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
   const { category, amount, note, expense_date } = req.body || {};
   if (!category) return res.status(400).json({ error: 'category required' });
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'Valid amount required' });
-  const info = db
-    .prepare(
-      `INSERT INTO expenses (store_id, category, amount, note, expense_date, created_by)
-       VALUES (?,?,?,?,?,?)`
-    )
-    .run(
-      req.storeId,
-      category,
-      Number(amount),
-      note || null,
-      expense_date || new Date().toISOString().slice(0, 10),
-      req.user.id
-    );
-  const expense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(info.lastInsertRowid);
+  const expense = await db.insert('expenses', {
+    store_id: req.storeId,
+    category,
+    amount: Number(amount),
+    note: note || null,
+    expense_date: expense_date || new Date().toISOString().slice(0, 10),
+    created_by: req.user.id,
+    created_at: db.now(),
+  });
   logActivity(
     req.user,
     'expense',
@@ -59,15 +52,16 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     req.storeId
   );
   res.status(201).json({ expense });
-});
+}));
 
-router.delete('/:id', authorize('admin'), (req, res) => {
-  const info = db
-    .prepare('DELETE FROM expenses WHERE id = ? AND store_id = ?')
-    .run(req.params.id, req.storeId);
-  if (info.changes === 0) return res.status(404).json({ error: 'Expense not found' });
+router.delete('/:id', authorize('admin'), asyncHandler(async (req, res) => {
+  const expense = await db.get('expenses', req.params.id);
+  if (!expense || Number(expense.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Expense not found' });
+  }
+  await db.remove('expenses', req.params.id);
   logActivity(req.user, 'expense_deleted', `Deleted expense id ${req.params.id}`, req.storeId);
   res.json({ success: true });
-});
+}));
 
 module.exports = router;

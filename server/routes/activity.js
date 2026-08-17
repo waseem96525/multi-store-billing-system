@@ -2,49 +2,49 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
 router.use(authenticate, attachStore);
 
 // Audit log with optional filters (admin only)
-router.get('/', authorize('admin'), (req, res) => {
+router.get('/', authorize('admin'), asyncHandler(async (req, res) => {
   const { action, user_id, limit = 300 } = req.query;
-  let sql = `SELECT a.*, u.name AS user_name, s.name AS store_name
-             FROM activity_logs a
-             LEFT JOIN users u ON u.id = a.user_id
-             LEFT JOIN stores s ON s.id = a.store_id
-             WHERE 1=1`;
-  const params = [];
-  if (action) {
-    sql += ' AND a.action = ?';
-    params.push(action);
-  }
-  if (user_id) {
-    sql += ' AND a.user_id = ?';
-    params.push(Number(user_id));
-  }
-  sql += ' ORDER BY a.id DESC LIMIT ?';
-  params.push(Math.min(parseInt(limit, 10) || 300, 1000));
+  let logs = await db.all('activity_logs');
+  if (action) logs = logs.filter((l) => l.action === action);
+  if (user_id) logs = logs.filter((l) => String(l.user_id) === String(user_id));
+  logs.sort((a, b) => b.id - a.id);
+  logs = logs.slice(0, Math.min(parseInt(limit, 10) || 300, 1000));
 
-  const logs = db.prepare(sql).all(...params);
-  const actions = db
-    .prepare('SELECT DISTINCT action FROM activity_logs ORDER BY action')
-    .all()
-    .map((r) => r.action);
-  res.json({ logs, actions });
-});
+  const [users, stores, all] = await Promise.all([db.all('users'), db.all('stores'), db.all('activity_logs')]);
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const storeMap = new Map(stores.map((s) => [s.id, s]));
+  const actions = [...new Set(all.map((l) => l.action))].sort();
+  res.json({
+    logs: logs.map((l) => ({
+      ...l,
+      user_name: l.user_id && userMap.get(l.user_id) ? userMap.get(l.user_id).name : null,
+      store_name: l.store_id && storeMap.get(l.store_id) ? storeMap.get(l.store_id).name : null,
+    })),
+    actions,
+  });
+}));
 
 // Distinct users who have activity entries (for the filter dropdown)
-router.get('/users', authorize('admin'), (req, res) => {
-  const users = db
-    .prepare(
-      `SELECT DISTINCT u.id, u.name FROM activity_logs a
-       LEFT JOIN users u ON u.id = a.user_id
-       WHERE u.id IS NOT NULL ORDER BY u.name`
-    )
-    .all();
-  res.json({ users });
-});
+router.get('/users', authorize('admin'), asyncHandler(async (req, res) => {
+  const [logs, users] = await Promise.all([db.all('activity_logs'), db.all('users')]);
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const seen = new Set();
+  const result = [];
+  for (const l of logs) {
+    if (!l.user_id || seen.has(l.user_id)) continue;
+    seen.add(l.user_id);
+    const u = userMap.get(l.user_id);
+    if (u) result.push({ id: u.id, name: u.name });
+  }
+  result.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  res.json({ users: result });
+}));
 
 module.exports = router;

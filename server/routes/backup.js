@@ -1,36 +1,50 @@
 const express = require('express');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
 router.use(authenticate, attachStore);
 
-// Download a consistent snapshot of the whole database (admin only).
-// Uses VACUUM INTO so the backup is a single valid SQLite file even in WAL mode.
-router.get('/', authorize('admin'), (req, res) => {
-  if (process.env.TURSO_URL) {
-    return res.status(400).json({
-      error: 'Backup is only available when running with a local database file (not on the hosted Vercel/Turso deployment)',
-    });
+const TABLES = [
+  'users',
+  'categories',
+  'products',
+  'product_stock',
+  'invoices',
+  'invoice_items',
+  'stock_adjustments',
+  'suppliers',
+  'customers',
+  'purchases',
+  'purchase_items',
+  'held_bills',
+  'stores',
+  'expenses',
+  'returns',
+  'return_items',
+  'stock_transfers',
+  'stock_transfer_items',
+  'activity_logs',
+];
+
+// Download a full JSON snapshot of the Firebase database (admin only).
+router.get('/', authorize('admin'), asyncHandler(async (req, res) => {
+  const raw = await db.getAll();
+  const snapshot = {};
+  for (const t of TABLES) {
+    snapshot[t] = raw[t] || {};
   }
-  const tmpFile = path.join(os.tmpdir(), `retail-pos-backup-${Date.now()}.db`);
-  try {
-    db.exec(`VACUUM INTO '${tmpFile.replace(/'/g, "''")}'`);
-    res.download(tmpFile, `retail-pos-backup-${new Date().toISOString().slice(0, 10)}.db`, (err) => {
-      fs.unlink(tmpFile, () => {});
-      if (err && !res.headersSent) {
-        res.status(500).json({ error: 'Backup download failed' });
-      }
-    });
-  } catch (e) {
-    try { fs.unlink(tmpFile, () => {}); } catch (e2) {}
-    res.status(500).json({ error: 'Could not create backup: ' + e.message });
-  }
-});
+  snapshot.meta = raw.meta || {};
+  const body = JSON.stringify(snapshot, null, 2);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="retail-pos-backup-${new Date().toISOString().slice(0, 10)}.json"`
+  );
+  res.send(body);
+}));
 
 module.exports = router;

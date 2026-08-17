@@ -1,0 +1,66 @@
+{
+  // Firebase Realtime Database security rules for this app.
+  // Paste this into: Firebase console > Realtime Database > Rules
+  //
+  // The server signs in users through Firebase Auth and accesses the
+  // database with their ID token, so data is only readable/writable by
+  // logged-in users of this app. See README for upgrading to a service
+  // account for full admin access.
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "meta": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "users": {
+      ".indexOn": ["email", "username"],
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "product_stock": {
+      ".indexOn": ["store_id"]
+    },
+    "invoices": {
+      ".indexOn": ["store_id", "created_at"]
+    },
+    "invoice_items": {
+      ".indexOn": ["invoice_id", "product_id"]
+    },
+    "products": {
+      ".indexOn": ["barcode", "sku", "name", "category_id"]
+    },
+    "purchases": {
+      ".indexOn": ["store_id", "supplier_id"]
+    },
+    "purchase_items": {
+      ".indexOn": ["purchase_id"]
+    },
+    "stock_adjustments": {
+      ".indexOn": ["store_id", "product_id"]
+    },
+    "expenses": {
+      ".indexOn": ["store_id", "expense_date"]
+    },
+    "returns": {
+      ".indexOn": ["store_id", "invoice_id"]
+    },
+    "return_items": {
+      ".indexOn": ["return_id"]
+    },
+    "stock_transfers": {
+      ".indexOn": ["from_store_id", "to_store_id"]
+    },
+    "stock_transfer_items": {
+      ".indexOn": ["transfer_id"]
+    },
+    "activity_logs": {
+      ".indexOn": ["action", "user_id", "store_id"]
+    },
+    "held_bills": {
+      ".indexOn": ["store_id"]
+    }
+  }
+}

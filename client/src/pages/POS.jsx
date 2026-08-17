@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import CountUp from '../components/CountUp';
+import SuccessCheck from '../components/SuccessCheck';
 import { listProducts, getProductByBarcode, listFrequentProducts } from '../api/products';
 import { listCustomers, createCustomer } from '../api/customers';
 import {
@@ -32,18 +34,20 @@ const round2 = (n) => Math.round(n * 100) / 100;
 function computeTotals(items, billDiscount, billDiscountPct) {
   let subtotal = 0;
   let taxTotal = 0;
+  let itemDisc = 0;
   for (const it of items) {
     const lineSub = it.unit_price * it.qty;
     subtotal += lineSub;
     const lineDisc = it.discount_pct
       ? (lineSub * it.discount_pct) / 100
       : it.discount || 0;
+    itemDisc += lineDisc;
     const taxable = lineSub - lineDisc;
     taxTotal += taxable * (it.tax_percent / 100);
   }
   const disc = billDiscountPct ? (subtotal * billDiscountPct) / 100 : billDiscount || 0;
-  const grand = subtotal - disc + taxTotal;
-  return { subtotal, taxTotal, disc, grand };
+  const grand = subtotal - itemDisc - disc + taxTotal;
+  return { subtotal, taxTotal, itemDisc, disc, grand };
 }
 
 export default function POS() {
@@ -333,7 +337,7 @@ export default function POS() {
     lastScannedRef.current.clear();
   }, []);
 
-  const { subtotal, taxTotal, disc, grand } = computeTotals(
+  const { subtotal, taxTotal, itemDisc, disc, grand } = computeTotals(
     cart.items,
     cart.discount,
     cart.discountPct
@@ -497,7 +501,7 @@ export default function POS() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full pb-20 lg:pb-0">
       {/* Toasts */}
-      <div className="fixed top-4 right-4 z-[60] space-y-2 w-72">
+        <div className="fixed top-16 lg:top-4 right-4 z-[60] space-y-2 w-[min(92vw,18rem)]">
         {toasts.map((t) => (
           <div
             key={t.id}
@@ -595,7 +599,7 @@ export default function POS() {
           </div>
         )}
 
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-auto table-wrap">
           {results.length === 0 ? (
             <div className="text-slate-400 text-sm">
               Type to search products, or use Scan to read a barcode / QR code…
@@ -860,6 +864,12 @@ export default function POS() {
             <span>Tax</span>
             <span>₹{taxTotal.toFixed(2)}</span>
           </div>
+          {itemDisc > 0 && (
+            <div className="flex justify-between text-emerald-600">
+              <span>Item Discount</span>
+              <span>-₹{itemDisc.toFixed(2)}</span>
+            </div>
+          )}
           <div className="flex justify-between items-center">
             <span>Bill Discount</span>
             <div className="flex items-center gap-1">
@@ -1099,7 +1109,9 @@ export default function POS() {
 
           <div className="flex justify-between font-bold text-lg pt-1">
             <span>Grand Total</span>
-            <span>₹{grand.toFixed(2)}</span>
+            <span>
+              <CountUp value={grand} decimals={2} prefix="₹" />
+            </span>
           </div>
 
           <div className="flex gap-2 mt-2">
@@ -1125,7 +1137,9 @@ export default function POS() {
       <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-800 text-white flex items-center justify-between px-4 py-3 shadow-lg">
         <div>
           <div className="text-xs text-slate-300">{cart.items.length} item(s)</div>
-          <div className="font-bold text-lg">₹{grand.toFixed(2)}</div>
+          <div className="font-bold text-lg">
+            <CountUp value={grand} decimals={2} prefix="₹" />
+          </div>
         </div>
         <button
           type="button"
@@ -1172,6 +1186,7 @@ export default function POS() {
       {receipt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
           <div className="bg-white p-6 rounded-lg w-[min(92vw,20rem)] max-h-[90vh] overflow-auto receipt-pop">
+            <SuccessCheck className="mb-2" />
             <div id="receipt" className="text-sm">
               <div className="text-center font-bold mb-1">{receipt.store?.name || 'RETAIL SHOP'}</div>
               {receipt.store?.address && (
@@ -1219,6 +1234,12 @@ export default function POS() {
                   <span>Tax</span>
                   <span>₹{receipt.invoice.tax_total.toFixed(2)}</span>
                 </div>
+                {receipt.invoice.item_discount > 0 && (
+                  <div className="flex justify-between">
+                    <span>Item Discount</span>
+                    <span>₹{receipt.invoice.item_discount.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>Discount</span>
                   <span>₹{receipt.invoice.discount.toFixed(2)}</span>

@@ -2,123 +2,149 @@ const express = require('express');
 const db = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
-const { logActivity } = require('../utils/activity');
+const { logActivity, prepareLog } = require('../utils/activity');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
-router.use(authenticate);
-router.use(attachStore);
+router.use(authenticate, attachStore);
 
 // List returns for the current store (optional invoice filter)
-router.get('/', (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const { invoice_id } = req.query;
-  let sql = `SELECT r.*, i.invoice_no, u.name AS created_by_name
-             FROM returns r
-             LEFT JOIN invoices i ON i.id = r.invoice_id
-             LEFT JOIN users u ON u.id = r.created_by
-             WHERE r.store_id = ?`;
-  const params = [req.storeId];
+  let returns = await db.where('returns', (r) => Number(r.store_id) === Number(req.storeId));
   if (invoice_id) {
-    sql += ' AND r.invoice_id = ?';
-    params.push(invoice_id);
+    returns = returns.filter((r) => Number(r.invoice_id) === Number(invoice_id));
   }
-  sql += ' ORDER BY r.created_at DESC, r.id DESC';
-  const returns = db.prepare(sql).all(...params);
-  // attach items for each return
-  const itemStmt = db.prepare(
-    `SELECT ri.*, p.name AS product_name FROM return_items ri
-     LEFT JOIN products p ON p.id = ri.product_id
-     WHERE ri.return_id = ?`
-  );
-  for (const r of returns) r.items = itemStmt.all(r.id);
+  returns.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : b.id - a.id));
+
+  const [invoices, users, allItems, products] = await Promise.all([
+    db.all('invoices'),
+    db.all('users'),
+    db.all('return_items'),
+    db.all('products'),
+  ]);
+  const invoiceMap = new Map(invoices.map((i) => [i.id, i]));
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
+  for (const r of returns) {
+    r.invoice_no = r.invoice_id && invoiceMap.get(r.invoice_id) ? invoiceMap.get(r.invoice_id).invoice_no : null;
+    r.created_by_name = r.created_by && userMap.get(r.created_by) ? userMap.get(r.created_by).name : null;
+    r.items = allItems
+      .filter((it) => Number(it.return_id) === Number(r.id))
+      .map((it) => ({
+        ...it,
+        product_name: productMap.get(it.product_id) ? productMap.get(it.product_id).name : null,
+      }));
+  }
   res.json({ returns });
-});
+}));
 
 // Detailed return (for the receipt/print view)
-router.get('/:id', (req, res) => {
-  const ret = db
-    .prepare(
-      `SELECT r.*, i.invoice_no, u.name AS created_by_name, s.name AS store_name, s.address, s.phone, s.gstin
-       FROM returns r
-       LEFT JOIN invoices i ON i.id = r.invoice_id
-       LEFT JOIN users u ON u.id = r.created_by
-       LEFT JOIN stores s ON s.id = r.store_id
-       WHERE r.id = ? AND r.store_id = ?`
-    )
-    .get(req.params.id, req.storeId);
-  if (!ret) return res.status(404).json({ error: 'Return not found' });
-  ret.items = db
-    .prepare(
-      `SELECT ri.*, p.name AS product_name FROM return_items ri
-       LEFT JOIN products p ON p.id = ri.product_id
-       WHERE ri.return_id = ?`
-    )
-    .all(ret.id);
+router.get('/:id', asyncHandler(async (req, res) => {
+  const ret = await db.get('returns', req.params.id);
+  if (!ret || Number(ret.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Return not found' });
+  }
+  const [invoice, user, store, allItems, products] = await Promise.all([
+    ret.invoice_id ? db.get('invoices', ret.invoice_id) : null,
+    ret.created_by ? db.get('users', ret.created_by) : null,
+    db.get('stores', ret.store_id),
+    db.all('return_items'),
+    db.all('products'),
+  ]);
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  ret.invoice_no = invoice ? invoice.invoice_no : null;
+  ret.created_by_name = user ? user.name : null;
+  ret.store_name = store ? store.name : null;
+  ret.address = store ? store.address : null;
+  ret.phone = store ? store.phone : null;
+  ret.gstin = store ? store.gstin : null;
+  ret.items = allItems
+    .filter((it) => Number(it.return_id) === Number(ret.id))
+    .map((it) => ({
+      ...it,
+      product_name: productMap.get(it.product_id) ? productMap.get(it.product_id).name : null,
+    }));
   res.json({ return: ret });
-});
+}));
 
 // Get an invoice's returnable items
-router.get('/invoice/:invoiceId/items', (req, res) => {
-  const invoice = db
-    .prepare('SELECT * FROM invoices WHERE id = ? AND store_id = ?')
-    .get(req.params.invoiceId, req.storeId);
-  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  const items = db
-    .prepare(
-      `SELECT ii.id AS invoice_item_id, ii.product_id, p.name AS product_name, p.sku,
-              ii.qty AS sold_qty, ii.unit_price
-       FROM invoice_items ii
-       LEFT JOIN products p ON p.id = ii.product_id
-       WHERE ii.invoice_id = ?`
-    )
-    .all(invoice.id);
-  const alreadyReturned = db
-    .prepare(
-      `SELECT product_id, COALESCE(SUM(qty), 0) AS qty FROM return_items ri
-       WHERE ri.return_id IN (SELECT id FROM returns WHERE invoice_id = ?)
-       GROUP BY product_id`
-    )
-    .all(invoice.id);
-  const returnedMap = Object.fromEntries(alreadyReturned.map((r) => [r.product_id, r.qty]));
+router.get('/invoice/:invoiceId/items', asyncHandler(async (req, res) => {
+  const invoice = await db.get('invoices', req.params.invoiceId);
+  if (!invoice || Number(invoice.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
+  const [allItems, products, allReturns, allReturnItems] = await Promise.all([
+    db.all('invoice_items'),
+    db.all('products'),
+    db.all('returns'),
+    db.all('return_items'),
+  ]);
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const items = allItems
+    .filter((it) => Number(it.invoice_id) === Number(invoice.id))
+    .map((it) => {
+      const p = productMap.get(it.product_id);
+      return {
+        invoice_item_id: it.id,
+        product_id: it.product_id,
+        product_name: p ? p.name : null,
+        sku: p ? p.sku : null,
+        sold_qty: it.qty,
+        unit_price: it.unit_price,
+      };
+    });
+  const returnIds = new Set(
+    allReturns.filter((r) => Number(r.invoice_id) === Number(invoice.id)).map((r) => r.id)
+  );
+  const returnedMap = new Map();
+  for (const ri of allReturnItems) {
+    if (!returnIds.has(ri.return_id)) continue;
+    returnedMap.set(ri.product_id, (returnedMap.get(ri.product_id) || 0) + ri.qty);
+  }
   for (const it of items) {
-    it.already_returned = returnedMap[it.product_id] || 0;
+    it.already_returned = returnedMap.get(it.product_id) || 0;
     it.returnable_qty = Math.max(0, it.sold_qty - it.already_returned);
   }
   res.json({ invoice, items });
-});
+}));
 
-router.post('/', authorize('admin', 'inventory'), (req, res) => {
+router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
   const { invoice_id, reason, items } = req.body || {};
   if (!invoice_id) return res.status(400).json({ error: 'invoice_id required' });
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'At least one item is required' });
   }
 
-  const invoice = db
-    .prepare('SELECT * FROM invoices WHERE id = ? AND store_id = ?')
-    .get(invoice_id, req.storeId);
-  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  const invoice = await db.get('invoices', invoice_id);
+  if (!invoice || Number(invoice.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
 
   // Validate requested quantities against sold minus already returned
-  const invoiceItems = db
-    .prepare('SELECT * FROM invoice_items WHERE invoice_id = ?')
-    .all(invoice.id);
+  const [allInvoiceItems, allReturns, allReturnItems, stockRows] = await Promise.all([
+    db.all('invoice_items'),
+    db.all('returns'),
+    db.all('return_items'),
+    db.where('product_stock', (r) => Number(r.store_id) === Number(req.storeId)),
+  ]);
+  const invoiceItems = allInvoiceItems.filter((it) => Number(it.invoice_id) === Number(invoice.id));
   const soldMap = new Map();
-  for (const it of invoiceItems) {
-    soldMap.set(it.product_id, (soldMap.get(it.product_id) || 0) + it.qty);
-  }
   const unitPriceMap = new Map();
   for (const it of invoiceItems) {
+    soldMap.set(it.product_id, (soldMap.get(it.product_id) || 0) + it.qty);
     if (!unitPriceMap.has(it.product_id)) unitPriceMap.set(it.product_id, it.unit_price);
   }
-  const alreadyReturned = db
-    .prepare(
-      `SELECT product_id, COALESCE(SUM(qty), 0) AS qty FROM return_items ri
-       WHERE ri.return_id IN (SELECT id FROM returns WHERE invoice_id = ?)
-       GROUP BY product_id`
-    )
-    .all(invoice.id);
-  const returnedMap = new Map(alreadyReturned.map((r) => [r.product_id, r.qty]));
+  const returnIds = new Set(
+    allReturns.filter((r) => Number(r.invoice_id) === Number(invoice.id)).map((r) => r.id)
+  );
+  const returnedMap = new Map();
+  for (const ri of allReturnItems) {
+    if (!returnIds.has(ri.return_id)) continue;
+    returnedMap.set(ri.product_id, (returnedMap.get(ri.product_id) || 0) + ri.qty);
+  }
 
   const lineItems = [];
   for (const it of items) {
@@ -130,9 +156,7 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
     const sold = soldMap.get(productId) || 0;
     const returned = returnedMap.get(productId) || 0;
     if (qty > sold - returned) {
-      return res
-        .status(400)
-        .json({ error: `Cannot return more than ${sold - returned} of this item` });
+      return res.status(400).json({ error: `Cannot return more than ${sold - returned} of this item` });
     }
     lineItems.push({
       product_id: productId,
@@ -143,56 +167,53 @@ router.post('/', authorize('admin', 'inventory'), (req, res) => {
   }
 
   const totalRefund = lineItems.reduce((sum, l) => sum + l.line_total, 0);
+  const [returnId, log] = await Promise.all([
+    db.nextId('returns'),
+    prepareLog(
+      req.user,
+      'return',
+      `Return #? on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}`,
+      req.storeId
+    ),
+  ]);
 
-  // All writes in one transaction script (remote Turso friendly)
-  const esc = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-  const num = (n) => (Number.isFinite(Number(n)) ? String(Number(n)) : '0');
   const stockAgg = new Map();
   for (const l of lineItems) stockAgg.set(l.product_id, (stockAgg.get(l.product_id) || 0) + l.qty);
-  const ensureStock =
-    `INSERT OR IGNORE INTO product_stock (product_id, store_id, stock_qty, reorder_level) VALUES ` +
-    [...stockAgg.keys()].map((pid) => `(${pid}, ${req.storeId}, 0, 0)`).join(', ') + ';';
-  const restock =
-    `UPDATE product_stock SET stock_qty = stock_qty + CASE product_id ` +
-    [...stockAgg].map(([pid, qty]) => `WHEN ${pid} THEN ${num(qty)}`).join(' ') +
-    ` END WHERE store_id = ${req.storeId} AND product_id IN (${[...stockAgg.keys()].join(',')});`;
-  const itemsInsert =
-    `INSERT INTO return_items (return_id, product_id, qty, unit_price, line_total)
-     SELECT ` +
-    lineItems
-      .map((l) => `?returnId?, ${l.product_id}, ${num(l.qty)}, ${num(l.unit_price)}, ${num(l.line_total)}`)
-      .join(' UNION ALL SELECT ') +
-    ';';
+  const stockMap = new Map(stockRows.map((r) => [r.product_id, r]));
 
-  const returnInsert =
-    `INSERT INTO returns (store_id, invoice_id, reason, total_refund, created_by)
-     VALUES (${req.storeId}, ${invoice.id}, ${reason ? esc(reason) : 'NULL'}, ${num(totalRefund)}, ${req.user.id});`;
-
-  // Writes in 3 round trips: BEGIN+insert, read row id, then rest+COMMIT
-  let returnId;
-  try {
-    db.exec('BEGIN;\n' + returnInsert);
-    returnId = db.prepare('SELECT last_insert_rowid() AS id').get().id;
-    db.exec(
-      [
-        itemsInsert.replace(/\?returnId\?/g, returnId),
-        ensureStock,
-        restock,
-        'COMMIT;',
-      ].join('\n')
-    );
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch (er) { /* ignore */ }
-    return res.status(400).json({ error: e.message });
+  const now = db.now();
+  const paths = {};
+  paths[`returns/${returnId}`] = {
+    id: returnId,
+    store_id: req.storeId,
+    invoice_id: invoice.id,
+    reason: reason || null,
+    total_refund: totalRefund,
+    created_by: req.user.id,
+    created_at: now,
+  };
+  lineItems.forEach((l, i) => {
+    paths[`return_items/${returnId}_${i + 1}`] = {
+      id: `${returnId}_${i + 1}`,
+      return_id: returnId,
+      ...l,
+    };
+  });
+  for (const [pid, qty] of stockAgg) {
+    const cur = stockMap.get(pid);
+    paths[`product_stock/${db.stockKey(pid, req.storeId)}`] = {
+      product_id: pid,
+      store_id: req.storeId,
+      stock_qty: (cur ? cur.stock_qty : 0) + qty,
+      reorder_level: cur ? cur.reorder_level : 0,
+    };
   }
-  const ret = db.prepare('SELECT * FROM returns WHERE id = ?').get(returnId);
-  logActivity(
-    req.user,
-    'return',
-    `Return #${returnId} on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}`,
-    req.storeId
-  );
+  log.value.details = log.value.details.replace('#?', `#${returnId}`);
+  paths[log.key] = log.value;
+  await db.patchMulti(paths);
+
+  const ret = { id: returnId, store_id: req.storeId, invoice_id: invoice.id, reason: reason || null, total_refund: totalRefund, created_by: req.user.id, created_at: now };
   res.status(201).json({ return: ret });
-});
+}));
 
 module.exports = router;

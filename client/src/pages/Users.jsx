@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { listUsers, register, setUserActive } from '../api/auth';
 import { listStores } from '../api/stores';
 
-const EMPTY = { name: '', username: '', password: '', role: 'cashier', store_id: '' };
+const EMPTY = { name: '', username: '', email: '', password: '', role: 'cashier', store_id: '' };
 
 export default function Users() {
   const [users, setUsers] = useState([]);
@@ -74,16 +74,23 @@ export default function Users() {
             required
           />
           <input
+            type="email"
             className="w-full border rounded px-2 py-1"
-            placeholder="Username *"
+            placeholder="Email (login id) *"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            required
+          />
+          <input
+            className="w-full border rounded px-2 py-1"
+            placeholder="Username (optional)"
             value={form.username}
             onChange={(e) => setForm({ ...form, username: e.target.value })}
-            required
           />
           <input
             type="password"
             className="w-full border rounded px-2 py-1"
-            placeholder="Password *"
+            placeholder="Password (min 6 chars) *"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             required

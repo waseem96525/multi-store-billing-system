@@ -25,7 +25,7 @@ const cartSlice = createSlice({
           unit_price: p.selling_price,
           tax_percent: p.tax_percent,
           discount: 0,
-          discount_pct: null,
+          discount_pct: p.discount_pct > 0 ? p.discount_pct : null,
           qty: 1,
           stock_qty: p.stock_qty,
         });
@@ -45,7 +45,7 @@ const cartSlice = createSlice({
           unit_price: product.selling_price,
           tax_percent: product.tax_percent,
           discount: 0,
-          discount_pct: null,
+          discount_pct: product.discount_pct > 0 ? product.discount_pct : null,
           qty: add,
           stock_qty: product.stock_qty,
         });

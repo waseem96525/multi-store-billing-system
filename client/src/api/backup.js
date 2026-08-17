@@ -5,7 +5,7 @@ export const downloadBackup = async () => {
   const url = URL.createObjectURL(res.data);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `retail-pos-backup-${new Date().toISOString().slice(0, 10)}.db`;
+  a.download = `retail-pos-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 };

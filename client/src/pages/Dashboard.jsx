@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getDashboard } from '../api/dashboard';
+import CountUp from '../components/CountUp';
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
@@ -17,23 +18,31 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-5 rounded-lg shadow">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger">
+        <div className="stagger-item hover-lift bg-white p-5 rounded-lg shadow">
           <div className="text-sm text-slate-500">Sales Today</div>
-          <div className="text-2xl font-bold">₹{data.salesToday.total.toFixed(2)}</div>
+          <div className="text-2xl font-bold">
+            <CountUp value={data.salesToday.total} decimals={2} prefix="₹" />
+          </div>
           <div className="text-xs text-slate-400">{data.salesToday.count} invoices</div>
         </div>
-        <div className="bg-white p-5 rounded-lg shadow">
+        <div className="stagger-item hover-lift bg-white p-5 rounded-lg shadow">
           <div className="text-sm text-slate-500">Low Stock Items</div>
-          <div className="text-2xl font-bold text-red-600">{data.lowStock}</div>
+          <div className="text-2xl font-bold text-red-600">
+            <CountUp value={data.lowStock} />
+          </div>
         </div>
-        <div className="bg-white p-5 rounded-lg shadow">
+        <div className="stagger-item hover-lift bg-white p-5 rounded-lg shadow">
           <div className="text-sm text-slate-500">Total Products</div>
-          <div className="text-2xl font-bold">{data.totalProducts}</div>
+          <div className="text-2xl font-bold">
+            <CountUp value={data.totalProducts} />
+          </div>
         </div>
-        <div className="bg-white p-5 rounded-lg shadow">
+        <div className="stagger-item hover-lift bg-white p-5 rounded-lg shadow">
           <div className="text-sm text-slate-500">Supplier Payables</div>
-          <div className="text-2xl font-bold text-amber-600">₹{Number(data.outstandingPayables).toFixed(2)}</div>
+          <div className="text-2xl font-bold text-amber-600">
+            <CountUp value={Number(data.outstandingPayables)} decimals={2} prefix="₹" />
+          </div>
         </div>
       </div>
 
