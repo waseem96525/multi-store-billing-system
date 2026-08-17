@@ -212,11 +212,11 @@ export function joinedProducts() {
     byProduct.set(String(row.product_id), row);
   }
   const out = [];
-  for (const p of live.products.values()) {
-    const s = byProduct.get(String(p.id));
+  for (const [key, p] of live.products) {
+    const s = byProduct.get(String(key));
     out.push({
       ...p,
-      id: Number(p.id),
+      id: Number(key),
       stock_qty: s ? Number(s.stock_qty) || 0 : 0,
       reorder_level: s ? Number(s.reorder_level) || 0 : 0,
     });
@@ -247,18 +247,18 @@ export function liveByBarcode(code) {
 export function getLiveProduct(id) {
   const p = live.products.get(String(id));
   if (!p) return null;
-  const s = live.stockByKey.get(`${p.id}_${currentStoreId()}`);
+  const s = live.stockByKey.get(`${String(id)}_${currentStoreId()}`);
   return {
     ...p,
-    id: Number(p.id),
+    id: Number(id),
     stock_qty: s ? Number(s.stock_qty) || 0 : 0,
     reorder_level: s ? Number(s.reorder_level) || 0 : 0,
   };
 }
 
 export function getLiveCustomers() {
-  return [...live.customers.values()]
-    .map((c) => ({ id: Number(c.id), name: c.name, phone: c.phone, email: c.email }))
+  return [...live.customers.entries()]
+    .map(([key, c]) => ({ id: Number(key), name: c.name, phone: c.phone, email: c.email }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
@@ -272,17 +272,29 @@ async function seedFromCache() {
   try {
     const cat = await idbGet('catalog', catalogKey());
     if (!cat) return;
-    for (const p of cat.products || []) live.products.set(String(p.id), p);
     for (const p of cat.products || []) {
-      live.stockByKey.set(`${p.id}_${currentStoreId()}`, {
-        product_id: p.id,
+      const pid = Number(p.id);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      live.products.set(String(pid), p);
+    }
+    for (const p of cat.products || []) {
+      const pid = Number(p.id);
+      if (!Number.isInteger(pid) || pid <= 0) continue;
+      live.stockByKey.set(`${pid}_${currentStoreId()}`, {
+        product_id: pid,
         store_id: Number(currentStoreId()),
         stock_qty: Number(p.stock_qty) || 0,
         reorder_level: Number(p.reorder_level) || 0,
       });
     }
-    for (const c of cat.customers || []) live.customers.set(String(c.id), c);
-    if (cat.store) live.stores.set(String(cat.store.id), cat.store);
+    for (const c of cat.customers || []) {
+      const cid = Number(c.id);
+      if (!Number.isInteger(cid) || cid <= 0) continue;
+      live.customers.set(String(cid), c);
+    }
+    if (cat.store && Number.isInteger(Number(cat.store.id))) {
+      live.stores.set(String(cat.store.id), cat.store);
+    }
   } catch {
     /* first run: nothing cached yet */
   }
