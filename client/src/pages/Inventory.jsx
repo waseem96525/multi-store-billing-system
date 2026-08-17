@@ -536,16 +536,16 @@ export default function Inventory() {
                   onChange={(e) => setForm({ ...form, tax_percent: e.target.value })}
                 />
               </label>
-              <label className="text-xs text-slate-500">
+              <label className="text-xs text-slate-500 min-w-0">
                 Item Discount % (auto-applied in POS)
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-2 mt-1 flex-wrap min-w-0">
                   <input
                     type="range"
                     min={0}
                     max={100}
                     value={Number(form.discount_pct) || 0}
                     onChange={(e) => setForm({ ...form, discount_pct: Number(e.target.value) })}
-                    className="flex-1 accent-emerald-600"
+                    className="flex-1 min-w-0 accent-emerald-600"
                   />
                   <span className="w-12 text-right font-semibold text-emerald-700">
                     {Number(form.discount_pct) || 0}%
