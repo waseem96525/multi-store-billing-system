@@ -99,9 +99,21 @@ export default function POS() {
   const detectorRef = useRef(null);
   const scanningRef = useRef(false);
   const lastScannedRef = useRef(new Set());
+  const qtyInputs = useRef({});
 
   const live = useLiveCatalog();
   const { version: liveVersion, ready: liveReady } = live;
+
+  // Keep the latest handler versions reachable from the keyboard listener
+  // (registered once) without stale-closure bugs.
+  const chargeRef = useRef();
+  const holdRef = useRef();
+  const scannerRef = useRef();
+  const reprintRef = useRef();
+  const recentSalesRef = useRef(recentSales);
+  recentSalesRef.current = recentSales;
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
 
   const addToast = useCallback((message, type = 'success') => {
     const id = Date.now() + Math.random();
@@ -247,19 +259,64 @@ export default function POS() {
   // Global keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      const inField =
+        e.target.tagName === 'INPUT' ||
+        e.target.tagName === 'TEXTAREA' ||
+        e.target.tagName === 'SELECT';
+
+      // Shortcuts that work even while typing in a field
+      if (e.key === 'F4') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.key === 'F8') {
+        e.preventDefault();
+        const last = recentSalesRef.current[0];
+        if (last) reprintRef.current(last.id);
+        else addToast('No previous sale to reprint', 'info');
+        return;
+      }
+      if (e.key === 'F9') {
+        e.preventDefault();
+        const first = cartRef.current.items[0];
+        if (!first) {
+          addToast('Cart is empty', 'info');
+          return;
+        }
+        setEditingPrice(first.product_id);
+        return;
+      }
+      if (e.key === 'F10') {
+        e.preventDefault();
+        chargeRef.current();
+        return;
+      }
+      if (e.key === 'F12') {
+        e.preventDefault();
+        const first = cartRef.current.items[0];
+        if (!first) {
+          addToast('Cart is empty', 'info');
+          return;
+        }
+        const el = qtyInputs.current[first.product_id];
+        if (el) {
+          el.focus();
+          el.select();
+        }
+        return;
+      }
+
+      if (inField) {
         if (e.key === 'Escape') e.target.blur();
         return;
       }
       if (e.key === 'F2') {
         e.preventDefault();
-        if (!scanning) startScanner();
+        if (!scanning) scannerRef.current();
       } else if (e.key === 'F3') {
         e.preventDefault();
-        handleHold();
-      } else if (e.key === 'F4') {
-        e.preventDefault();
-        loadHeld().then(() => addToast(`${heldBills.length} parked bill(s) ready`, 'info'));
+        holdRef.current();
       } else if (e.key === 'F5') {
         e.preventDefault();
         dispatch(clearCart());
@@ -275,7 +332,12 @@ export default function POS() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanning, heldBills.length]);
+  }, [scanning]);
+
+  chargeRef.current = handleCharge;
+  holdRef.current = handleHold;
+  scannerRef.current = startScanner;
+  reprintRef.current = handleReprint;
 
   const handleAdd = useCallback(
     (product, qty = addQty) => {
@@ -894,6 +956,9 @@ export default function POS() {
                     −
                   </button>
                   <input
+                    ref={(el) => {
+                      qtyInputs.current[it.product_id] = el;
+                    }}
                     type="number"
                     className="w-14 border rounded text-center"
                     value={it.qty}
@@ -1515,6 +1580,17 @@ export default function POS() {
           </div>
         </div>
       )}
+      {/* Desktop shortcut hints */}
+      <div className="hidden md:flex fixed bottom-2 left-1/2 -translate-x-1/2 z-40 items-center gap-3 rounded-full bg-slate-900/90 text-slate-200 text-[11px] px-4 py-1.5 shadow-lg no-print">
+        <span><b className="text-white">F2</b> Scan</span>
+        <span><b className="text-white">F3</b> Park</span>
+        <span><b className="text-white">F4</b> Search</span>
+        <span><b className="text-white">F5</b> Clear</span>
+        <span><b className="text-white">F8</b> Reprint</span>
+        <span><b className="text-white">F9</b> Price</span>
+        <span><b className="text-white">F10</b> Checkout</span>
+        <span><b className="text-white">F12</b> Qty</span>
+      </div>
     </div>
   );
 }
