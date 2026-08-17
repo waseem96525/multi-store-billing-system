@@ -65,6 +65,28 @@ async function createUser(email, password) {
   });
 }
 
+// Exchange a long-lived refresh token for a fresh ID token (Firebase's
+// securetoken endpoint). Returns { id_token, refresh_token, expires_in }.
+async function refreshIdToken(refreshToken) {
+  const res = await fetch(
+    `https://securetoken.googleapis.com/v1/token?key=${config.firebase.apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.error ? data.error.message : `Token refresh failed (${res.status})`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.code = data.error && data.error.code;
+    throw err;
+  }
+  return data;
+}
+
 let certsCache = { at: 0, certs: {} };
 
 async function getCerts(force) {
@@ -109,4 +131,4 @@ async function verifyFirebaseToken(token) {
   return payload;
 }
 
-module.exports = { signInWithPassword, createUser, verifyFirebaseToken, ensureServerToken };
+module.exports = { signInWithPassword, createUser, refreshIdToken, verifyFirebaseToken, ensureServerToken };

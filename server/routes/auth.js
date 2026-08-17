@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { signInWithPassword, createUser, ensureServerToken } = require('../utils/auth');
+const { signInWithPassword, createUser, refreshIdToken, verifyFirebaseToken, ensureServerToken } = require('../utils/auth');
 const { storage } = require('../fb/context');
 const { authenticate, authorize } = require('../middleware/auth');
 const { logActivity } = require('../utils/activity');
@@ -38,6 +38,7 @@ router.post('/login', asyncHandler(async (req, res) => {
     logActivity(user, 'login', `${user.name} signed in`, user.store_id);
     res.json({
       token: rec.idToken,
+      refreshToken: rec.refreshToken || null,
       user: {
         id: user.id,
         name: user.name,
@@ -48,6 +49,22 @@ router.post('/login', asyncHandler(async (req, res) => {
       },
     });
   });
+}));
+
+// Exchange a refresh token for a fresh ID token. Fire and forget: no
+// activity log, no user lookup - the ID token carries the identity.
+router.post('/refresh', asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body || {};
+  if (!refreshToken) return res.status(400).json({ error: 'refreshToken required' });
+  let rec;
+  try {
+    rec = await refreshIdToken(refreshToken);
+  } catch (e) {
+    return res.status(401).json({ error: 'Invalid refresh token' });
+  }
+  const payload = await verifyFirebaseToken(rec.id_token);
+  if (!payload) return res.status(401).json({ error: 'Invalid refresh token' });
+  res.json({ token: rec.id_token, expiresIn: Number(rec.expires_in || 3600) });
 }));
 
 router.get('/me', authenticate, asyncHandler(async (req, res) => {
