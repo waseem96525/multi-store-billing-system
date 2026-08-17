@@ -66,9 +66,20 @@ async function reserveIds(table, n) {
 // Attach the RTDB key as `id`. Rows created by this backend store `id`
 // inside the object, but data migrated/seeded externally may rely solely on
 // the key - without this, callers (edit/delete by id) break.
+// RTDB keys are strings, while the app's business ids are numeric counters;
+// normalize numeric-looking ids so joins/comparisons against numeric ids
+// (e.g. `ids.includes(p.id)` in purchases) work for legacy rows too. UIDs
+// (users table) stay strings.
+function toAppId(v) {
+  if (v === null || v === undefined) return v;
+  if (typeof v === 'number') return v;
+  if (/^\d+$/.test(String(v))) return Number(v);
+  return v;
+}
+
 function withId(key, obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  return { ...obj, id: obj.id ?? key };
+  return { ...obj, id: toAppId(obj.id ?? key) };
 }
 
 // All rows of a table as an array of objects.
