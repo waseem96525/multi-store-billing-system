@@ -23,4 +23,16 @@ router.post('/', authenticate, asyncHandler(async (req, res) => {
   res.status(201).json({ customer });
 }));
 
+router.put('/:id', authenticate, asyncHandler(async (req, res) => {
+  const existing = await db.get('customers', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Customer not found' });
+  const { name, phone, email } = req.body || {};
+  const updated = await db.update('customers', req.params.id, {
+    name: name !== undefined && name !== '' ? name : existing.name,
+    phone: phone !== undefined ? phone : existing.phone,
+    email: email !== undefined ? email : existing.email,
+  });
+  res.json({ customer: { id: updated.id, name: updated.name, phone: updated.phone, email: updated.email } });
+}));
+
 module.exports = router;

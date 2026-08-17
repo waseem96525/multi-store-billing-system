@@ -210,6 +210,12 @@ router.post('/', asyncHandler(async (req, res) => {
     };
   });
 
+  let customer = null;
+  if (cid) {
+    const c = await db.get('customers', cid);
+    if (c) customer = { id: c.id, name: c.name, phone: c.phone, email: c.email };
+  }
+
   res.status(201).json({
     invoice: {
       invoiceId,
@@ -236,6 +242,7 @@ router.post('/', asyncHandler(async (req, res) => {
       },
       items: receiptItems,
       cashier: { name: req.user.name },
+      customer,
       store: store || null,
     },
   });
@@ -285,10 +292,16 @@ router.get('/:id', asyncHandler(async (req, res) => {
       product_name: productMap.get(it.product_id) ? productMap.get(it.product_id).name : null,
       sku: productMap.get(it.product_id) ? productMap.get(it.product_id).sku : null,
     }));
+  let customer = null;
+  if (invoice.customer_id) {
+    const c = await db.get('customers', invoice.customer_id);
+    if (c) customer = { id: c.id, name: c.name, phone: c.phone, email: c.email };
+  }
   res.json({
     invoice,
     items,
     cashier: cashier ? { name: cashier.name, username: cashier.username } : null,
+    customer,
     store,
   });
 }));

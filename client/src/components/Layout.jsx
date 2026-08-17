@@ -7,6 +7,8 @@ import { listStores, getCurrentStore } from '../api/stores';
 import { getTheme, toggleTheme } from '../utils/theme';
 import ForestBackground from './ForestBackground';
 import TickerBar from './TickerBar';
+import OfflineBanner from './OfflineBanner';
+import { refreshCatalog } from '../offline/offlineStore';
 
 export default function Layout() {
   const dispatch = useDispatch();
@@ -34,6 +36,11 @@ export default function Layout() {
       .then(({ store }) => dispatch(setCurrentStoreInfo(store)))
       .catch(() => {});
   }, [dispatch]);
+
+  // Keep the offline product/customer cache fresh for the active store.
+  useEffect(() => {
+    if (navigator.onLine) refreshCatalog();
+  }, [currentStoreId]);
 
   const storeName =
     currentStore?.name ||
@@ -209,6 +216,7 @@ export default function Layout() {
       </aside>
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden pt-14 lg:pt-0">
+        <OfflineBanner />
         <TickerBar name={storeName} />
         <div key={location.pathname} className="animate-route p-4 lg:p-6">
           <Outlet />

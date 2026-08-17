@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { listInvoices, getInvoice } from '../api/invoices';
 import { printReceipt } from '../utils/print';
 import { exportCsv } from '../api/export';
+import SendInvoiceButtons from '../components/SendInvoiceButtons';
 
 export default function Invoices() {
   const [invoices, setInvoices] = useState([]);
@@ -167,12 +168,19 @@ export default function Invoices() {
                 </div>
                 <div className="text-xs mt-1">Mode: {detail.invoice.payment_mode}</div>
               </div>
-              {detail.store?.receipt_footer ? (
+                {detail.store?.receipt_footer ? (
                 <div className="text-center text-xs mt-3">{detail.store.receipt_footer}</div>
               ) : (
                 <div className="text-center text-xs mt-3">Thank you!</div>
               )}
             </div>
+            {detail.customer?.name && (
+              <div className="text-xs text-slate-500 mt-1">
+                Customer: {detail.customer.name}
+                {detail.customer.phone ? ` · ${detail.customer.phone}` : ''}
+              </div>
+            )}
+            <SendInvoiceButtons detail={detail} className="mt-3" />
             <div className="mt-4 flex gap-2 no-print">
               <button
                 className="flex-1 bg-slate-800 text-white py-2 rounded"

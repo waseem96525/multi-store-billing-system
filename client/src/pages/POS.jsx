@@ -8,10 +8,6 @@ import {
   createInvoice,
   getInvoice,
   listInvoices,
-  holdInvoice,
-  listHeldInvoices,
-  retrieveHeldInvoice,
-  deleteHeldInvoice,
 } from '../api/invoices';
 import {
   addItemQty,
@@ -28,6 +24,22 @@ import {
   clearCart,
 } from '../store/slices/cartSlice';
 import { printReceipt } from '../utils/print';
+import store from '../store';
+import {
+  searchCachedProducts,
+  findCachedProductByCode,
+  frequentFromCache,
+  getCachedCustomers,
+  enqueueInvoice,
+  applyOfflineSale,
+  parkHeld,
+  listHeld,
+  retrieveHeld,
+  deleteHeld,
+  getCatalog,
+  isOnline,
+} from '../offline/offlineStore';
+import SendInvoiceButtons from '../components/SendInvoiceButtons';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -76,6 +88,8 @@ export default function POS() {
   const [billDiscUnit, setBillDiscUnit] = useState('pct');
   const [itemDiscUnits, setItemDiscUnits] = useState({});
   const [recentSales, setRecentSales] = useState([]);
+  const [showNewCustomer, setShowNewCustomer] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '' });
 
   const searchRef = useRef(null);
   const videoRef = useRef(null);
@@ -108,14 +122,14 @@ export default function POS() {
       const data = await listFrequentProducts(12);
       setFrequent(data.products || []);
     } catch {
-      /* shelf optional */
+      const cached = await frequentFromCache(12);
+      setFrequent(cached);
     }
   }, []);
 
   const loadHeld = useCallback(async () => {
     try {
-      const data = await listHeldInvoices();
-      setHeldBills(data.heldBills || []);
+      setHeldBills(await listHeld());
     } catch {
       /* ignore */
     }
@@ -126,7 +140,7 @@ export default function POS() {
       const data = await listCustomers();
       setCustomers(data.customers || []);
     } catch {
-      /* ignore */
+      setCustomers(await getCachedCustomers());
     }
   }, []);
 
@@ -139,17 +153,32 @@ export default function POS() {
     }
   }, []);
 
-  const handleAddCustomer = async () => {
-    const name = window.prompt('New customer name:');
-    if (!name || !name.trim()) return;
+  const handleAddCustomer = () => {
+    if (!isOnline()) {
+      addToast('Go online to add a new customer', 'error');
+      return;
+    }
+    setNewCustomer({ name: '', phone: '', email: '' });
+    setShowNewCustomer(true);
+  };
+
+  const saveNewCustomer = async (e) => {
+    e.preventDefault();
+    const name = newCustomer.name.trim();
+    if (!name) return;
     try {
-      const { customer } = await createCustomer({ name: name.trim() });
+      const { customer } = await createCustomer({
+        name,
+        phone: newCustomer.phone.trim() || null,
+        email: newCustomer.email.trim() || null,
+      });
       setCustomers((c) => [...c, customer]);
       setSelectedCustomer(String(customer.id));
       dispatch(setCustomerId(customer.id));
+      setShowNewCustomer(false);
       addToast(`Customer "${customer.name}" added`, 'success');
-    } catch (e) {
-      addToast(e.response?.data?.error || 'Could not add customer', 'error');
+    } catch (err) {
+      addToast(err.response?.data?.error || 'Could not add customer', 'error');
     }
   };
 
@@ -170,18 +199,24 @@ export default function POS() {
     loadRecent();
   }, [loadFrequent, loadHeld, loadCustomers, loadRecent]);
 
-  // Debounced product search
+  // Debounced product search (falls back to the offline cache)
   useEffect(() => {
     const t = setTimeout(async () => {
       if (!query.trim()) {
         setResults([]);
         return;
       }
+      if (!isOnline()) {
+        setResults(await searchCachedProducts(query));
+        return;
+      }
       try {
         const data = await listProducts({ q: query });
         setResults(data.products);
-      } catch (e) {
-        setError(e.response?.data?.error || 'Search failed');
+      } catch {
+        const cached = await searchCachedProducts(query);
+        setResults(cached);
+        if (!cached.length) setError('Search failed (offline cache has nothing for this query)');
       }
     }, 200);
     return () => clearTimeout(t);
@@ -239,6 +274,12 @@ export default function POS() {
       }
       const code = query.trim();
       if (!code) return;
+      if (!isOnline()) {
+        const product = await findCachedProductByCode(code);
+        if (product) handleAdd(product);
+        else setError('Product not found for "' + code + '"');
+        return;
+      }
       try {
         const { product } = await getProductByBarcode(code);
         handleAdd(product);
@@ -285,9 +326,15 @@ export default function POS() {
                 stopScanner();
                 handleAdd(product);
               })
-              .catch(() => {
-                setScanStatus('No product for "' + code + '". Add it in Inventory.');
-                setTimeout(() => stopScanner(), 1500);
+              .catch(async () => {
+                const cached = await findCachedProductByCode(code);
+                if (cached) {
+                  stopScanner();
+                  handleAdd(cached);
+                } else {
+                  setScanStatus('No product for "' + code + '". Add it in Inventory.');
+                  setTimeout(() => stopScanner(), 1500);
+                }
               });
             return;
           }
@@ -365,18 +412,20 @@ export default function POS() {
         paymentMode: cart.paymentMode,
         customerId: selectedCustomer || null,
       };
-      const res = await holdInvoice({
-        payload,
-        label: `Parked · ${cart.items.length} item(s)`,
-      });
-      setHeldBills((h) => [res.heldBill, ...h]);
+      const heldBill = await parkHeld(payload, `Parked · ${cart.items.length} item(s)`);
+      setHeldBills((h) => [heldBill, ...h]);
       dispatch(clearCart());
       setSelectedCustomer('');
       setReceivedCash('');
       setCreditSale(false);
       setSplitPay({ cash: '', card: '', upi: '' });
       setItemDiscUnits({});
-      addToast('Bill parked. Retrieve it anytime with F4.', 'success');
+      addToast(
+        isOnline()
+          ? 'Bill parked. Retrieve it anytime with F4.'
+          : 'Bill parked on this device. Retrieve it anytime with F4 (even offline).',
+        'success'
+      );
     } catch (e) {
       addToast(e.response?.data?.error || 'Could not park bill', 'error');
     }
@@ -384,7 +433,7 @@ export default function POS() {
 
   const handleRetrieve = async (id) => {
     try {
-      const { heldBill } = await retrieveHeldInvoice(id);
+      const { heldBill } = await retrieveHeld(id);
       dispatch(clearCart());
       dispatch(setItems(heldBill.payload.items));
       dispatch(setDiscount(heldBill.payload.discount || 0));
@@ -392,7 +441,6 @@ export default function POS() {
       dispatch(setPaymentMode(heldBill.payload.paymentMode || 'cash'));
       setSelectedCustomer(heldBill.payload.customerId || '');
       setHeldBills((h) => h.filter((x) => x.id !== id));
-      await deleteHeldInvoice(id);
       addToast('Bill restored to cart', 'success');
       searchRef.current?.focus();
     } catch (e) {
@@ -402,12 +450,75 @@ export default function POS() {
 
   const handleDeleteHeld = async (id) => {
     try {
-      await deleteHeldInvoice(id);
+      await deleteHeld(id);
       setHeldBills((h) => h.filter((x) => x.id !== id));
       addToast('Parked bill discarded', 'info');
     } catch {
       /* ignore */
     }
+  };
+
+  const chargeOffline = async (payload) => {
+    const cat = await getCatalog();
+    const products = (cat && cat.products) || [];
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    for (const it of payload.items) {
+      const p = productMap.get(Number(it.product_id));
+      if (!p) throw new Error(`"${it.product_id}" is missing from the offline catalog`);
+      if ((Number(p.stock_qty) || 0) < Number(it.qty)) {
+        throw new Error(`Not enough stock offline for ${p.name} (${p.stock_qty} left)`);
+      }
+    }
+    const localNo =
+      'OFF-' +
+      new Date().toISOString().slice(2, 10).replace(/-/g, '') +
+      '-' +
+      String(Math.floor(Math.random() * 900) + 100);
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const selected = customers.find((c) => String(c.id) === String(selectedCustomer)) || null;
+    const receiptItems = cart.items.map((i) => {
+      const lineSub = i.unit_price * i.qty;
+      const lineDisc = i.discount_pct ? (lineSub * i.discount_pct) / 100 : i.discount || 0;
+      const taxable = lineSub - lineDisc;
+      return {
+        product_name: i.name,
+        qty: i.qty,
+        unit_price: i.unit_price,
+        discount: round2(lineDisc),
+        line_total: round2(taxable + (taxable * (i.tax_percent || 0)) / 100),
+      };
+    });
+    const invoice = {
+      invoice_no: localNo,
+      created_at: now,
+      status: payload.status,
+      subtotal,
+      tax_total: taxTotal,
+      discount: payload.discount,
+      item_discount: itemDisc,
+      grand_total: grand,
+      payment_mode: payload.payment_mode,
+      amount_paid: payload.amount_paid,
+      payment_breakdown: payload.payment_breakdown,
+      pending_sync: true,
+    };
+    const cashier = store.getState().auth.user
+      ? { name: store.getState().auth.user.name }
+      : null;
+    const shop = (cat && cat.store) || store.getState().store.currentStore;
+    await enqueueInvoice(payload, { invoice, items: receiptItems, cashier, customer: selected, store: shop });
+    await applyOfflineSale(payload);
+    setReceipt({ invoice, items: receiptItems, cashier, customer: selected, store: shop });
+    dispatch(clearCart());
+    setShowCart(false);
+    setSelectedCustomer('');
+    setReceivedCash('');
+    setCreditSale(false);
+    setSplitPay({ cash: '', card: '', upi: '' });
+    setItemDiscUnits({});
+    setBillDiscUnit('pct');
+    burstConfetti();
+    addToast('Sale saved on this device · ' + localNo + ' — will sync automatically', 'success');
   };
 
   const handleCharge = async () => {
@@ -429,51 +540,67 @@ export default function POS() {
       addToast('Select a customer for a credit sale', 'error');
       return;
     }
+    const amountPaid = usingSplit
+      ? splitTotal
+      : creditSale
+      ? received || 0
+      : grand;
+    const status = usingSplit
+      ? splitTotal >= grand - 0.001
+        ? 'paid'
+        : 'credit'
+      : creditSale
+      ? received >= grand
+        ? 'paid'
+        : 'credit'
+      : 'paid';
+    const dueDate = creditSale && status === 'credit'
+      ? new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+      : null;
+    const breakdown = usingSplit
+      ? splitModes.map((k) => ({ mode: k, amount: round2(parseFloat(splitPay[k]) || 0) }))
+      : null;
+    const payload = {
+      items: cart.items.map((i) => ({
+        product_id: i.product_id,
+        qty: i.qty,
+        unit_price: i.unit_price,
+        discount: i.discount_pct
+          ? round2((i.unit_price * i.qty * i.discount_pct) / 100)
+          : i.discount || 0,
+        tax_percent: i.tax_percent,
+      })),
+      discount: billDiscount,
+      payment_mode: usingSplit
+        ? splitModes.length === 1
+          ? splitModes[0]
+          : 'mixed'
+        : cart.paymentMode,
+      customer_id: selectedCustomer || null,
+      amount_paid: amountPaid,
+      status,
+      due_date: dueDate,
+      payment_breakdown: breakdown,
+    };
+
+    if (!isOnline()) {
+      setCharging(true);
+      setError('');
+      try {
+        await chargeOffline(payload);
+      } catch (e) {
+        const msg = e?.message || 'Sale failed';
+        setError(msg);
+        addToast(msg, 'error');
+      } finally {
+        setCharging(false);
+      }
+      return;
+    }
+
     setCharging(true);
     setError('');
     try {
-      const amountPaid = usingSplit
-        ? splitTotal
-        : creditSale
-        ? received || 0
-        : grand;
-      const status = usingSplit
-        ? splitTotal >= grand - 0.001
-          ? 'paid'
-          : 'credit'
-        : creditSale
-        ? received >= grand
-          ? 'paid'
-          : 'credit'
-        : 'paid';
-      const dueDate = creditSale && status === 'credit'
-        ? new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
-        : null;
-      const breakdown = usingSplit
-        ? splitModes.map((k) => ({ mode: k, amount: round2(parseFloat(splitPay[k]) || 0) }))
-        : null;
-      const payload = {
-        items: cart.items.map((i) => ({
-          product_id: i.product_id,
-          qty: i.qty,
-          unit_price: i.unit_price,
-          discount: i.discount_pct
-            ? round2((i.unit_price * i.qty * i.discount_pct) / 100)
-            : i.discount || 0,
-          tax_percent: i.tax_percent,
-        })),
-        discount: billDiscount,
-        payment_mode: usingSplit
-          ? splitModes.length === 1
-            ? splitModes[0]
-            : 'mixed'
-          : cart.paymentMode,
-        customer_id: selectedCustomer || null,
-        amount_paid: amountPaid,
-        status,
-        due_date: dueDate,
-        payment_breakdown: breakdown,
-      };
       const res = await createInvoice(payload);
       const detail = res.receipt;
       setReceipt(detail);
@@ -1183,10 +1310,63 @@ export default function POS() {
         </div>
       )}
 
+      {/* New customer modal */}
+      {showNewCustomer && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
+          <form
+            onSubmit={saveNewCustomer}
+            className="bg-white rounded-lg p-4 w-[min(92vw,22rem)] space-y-3"
+          >
+            <h3 className="font-semibold">New customer</h3>
+            <input
+              autoFocus
+              required
+              placeholder="Name *"
+              className="w-full border rounded px-2 py-1.5 text-sm"
+              value={newCustomer.name}
+              onChange={(e) => setNewCustomer({ ...newCustomer, name: e.target.value })}
+            />
+            <input
+              placeholder="Phone (for WhatsApp delivery)"
+              className="w-full border rounded px-2 py-1.5 text-sm"
+              value={newCustomer.phone}
+              onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
+            />
+            <input
+              placeholder="Email (for invoice delivery)"
+              className="w-full border rounded px-2 py-1.5 text-sm"
+              value={newCustomer.email}
+              onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                className="flex-1 bg-emerald-600 text-white py-2 rounded hover:bg-emerald-700"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                className="flex-1 border py-2 rounded hover:bg-slate-50"
+                onClick={() => setShowNewCustomer(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {receipt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
           <div className="bg-white p-6 rounded-lg w-[min(92vw,20rem)] max-h-[90vh] overflow-auto receipt-pop">
             <SuccessCheck className="mb-2" />
+            {receipt.invoice.pending_sync && (
+              <div className="text-center text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded px-2 py-1.5 mb-2">
+                ⚠ Saved on this device — will upload automatically when the
+                internet returns.
+              </div>
+            )}
             <div id="receipt" className="text-sm">
               <div className="text-center font-bold mb-1">{receipt.store?.name || 'RETAIL SHOP'}</div>
               {receipt.store?.address && (
@@ -1280,6 +1460,9 @@ export default function POS() {
                 <div className="text-center text-xs mt-3">Thank you!</div>
               )}
             </div>
+            {!receipt.invoice.pending_sync && (
+              <SendInvoiceButtons detail={receipt} className="mt-3" />
+            )}
             <div className="mt-4 flex gap-2 no-print">
               <button
                 className="flex-1 bg-slate-800 text-white py-2 rounded hover:bg-slate-700"
