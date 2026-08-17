@@ -406,7 +406,7 @@ export default function Inventory() {
             <form
               ref={formRef}
               onSubmit={handleSubmit}
-              className="bg-white p-5 rounded-lg max-h-[90vh] overflow-auto space-y-2"
+              className="bg-white p-5 pr-12 rounded-lg max-h-[90vh] overflow-y-auto overflow-x-hidden space-y-2"
             >
             <div
               className="flex items-center justify-between mb-2 cursor-move select-none touch-none"
