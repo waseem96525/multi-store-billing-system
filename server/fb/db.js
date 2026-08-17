@@ -34,29 +34,37 @@ const stockKey = (productId, storeId) => `${productId}_${storeId}`;
 
 // Allocate one id for a table. Retries guard against concurrent writers
 // (several serverless instances / the local server can race on the shared
-// counter); the row-existence check skips ids another writer already used.
+// counter). If the stored counter has fallen behind the real data (or an id
+// is already taken by a concurrent writer), we scan forward to the next free
+// id instead of retrying the same occupied id forever.
 async function nextId(table) {
-  for (let i = 0; i < 8; i++) {
-    const cur = Number((await client.get(`meta/counters/${table}`)) || 0);
-    const id = cur + 1;
-    if (await client.get(`${table}/${id}`)) continue;
+  for (let i = 0; i < 12; i++) {
+    let cur = Number((await client.get(`meta/counters/${table}`)) || 0);
+    let id = cur + 1;
+    // Skip over any ids that are already in use (handles stale counters/gaps).
+    while (await client.get(`${table}/${id}`)) {
+      await client.set(`meta/counters/${table}`, id);
+      id += 1;
+    }
     await client.set(`meta/counters/${table}`, id);
     if (Number((await client.get(`meta/counters/${table}`))) === id) return id;
   }
   throw new Error(`Could not allocate id for ${table}`);
 }
 
-// Allocate n consecutive ids in one round trip (plus a verify read).
+// Allocate n consecutive ids in one round trip (plus a verify read). Scans
+// forward past any occupied ids so a stale counter never deadlocks.
 async function reserveIds(table, n) {
   if (n <= 0) return [];
-  for (let i = 0; i < 8; i++) {
-    const cur = Number((await client.get(`meta/counters/${table}`)) || 0);
-    const taken = await client.get(`${table}/${cur + 1}`);
-    if (taken) continue;
-    await client.set(`meta/counters/${table}`, cur + n);
-    if (Number((await client.get(`meta/counters/${table}`))) === cur + n) {
+  for (let i = 0; i < 12; i++) {
+    let cur = Number((await client.get(`meta/counters/${table}`)) || 0);
+    let start = cur + 1;
+    while (await client.get(`${table}/${start}`)) start += 1;
+    const end = start + n - 1;
+    await client.set(`meta/counters/${table}`, end);
+    if (Number((await client.get(`meta/counters/${table}`))) === end) {
       const ids = [];
-      for (let k = 1; k <= n; k++) ids.push(cur + k);
+      for (let k = start; k <= end; k++) ids.push(k);
       return ids;
     }
   }

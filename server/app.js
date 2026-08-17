@@ -55,11 +55,10 @@ app.use((err, req, res, next) => {
   // eslint-disable-next-line no-console
   console.error(err);
   const status = err.status || 500;
-  if (status === 500) {
-    res.status(500).json({ error: 'Internal server error' });
-  } else {
-    res.status(status).json({ error: err.message });
-  }
+  // Surface the real message so clients/operators can see what failed
+  // (this is an internal business tool, not a public API).
+  const detail = err && err.message ? err.message : 'Internal server error';
+  res.status(status).json({ error: detail });
 });
 
 // Serve the built client (SPA) when available. Used for local production
