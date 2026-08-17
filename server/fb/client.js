@@ -23,7 +23,7 @@ class HttpError extends Error {
   }
 }
 
-async function attemptRequest(path, { method, body, query }) {
+async function attemptRequest(path, { method = 'GET', body, query = {} } = {}) {
   const token = tokenStore();
   const url = new URL(`${dbUrl}/${String(path).replace(/^\/+/, '')}.json`);
   if (token) url.searchParams.set('auth', token);
