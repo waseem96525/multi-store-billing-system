@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listProducts } from '../api/products';
 import { adjustStock, listAdjustments } from '../api/stock';
+import useLiveCatalog from '../realtime/useLiveCatalog';
 
 export default function Stock() {
   const [products, setProducts] = useState([]);
@@ -18,6 +19,15 @@ export default function Stock() {
   useEffect(() => {
     load().catch((e) => setError(e.response?.data?.error || 'Load failed'));
   }, []);
+
+  // Live sync: refresh the product/stock list when other devices change them.
+  const live = useLiveCatalog();
+  useEffect(() => {
+    if (!live.ready) return;
+    const t = setTimeout(load, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.version]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

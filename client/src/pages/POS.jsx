@@ -40,6 +40,8 @@ import {
   isOnline,
 } from '../offline/offlineStore';
 import SendInvoiceButtons from '../components/SendInvoiceButtons';
+import useLiveCatalog from '../realtime/useLiveCatalog';
+import { liveSearch, liveByBarcode, getLiveCustomers, getLiveProduct } from '../realtime/realtime';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -97,6 +99,9 @@ export default function POS() {
   const detectorRef = useRef(null);
   const scanningRef = useRef(false);
   const lastScannedRef = useRef(new Set());
+
+  const live = useLiveCatalog();
+  const { version: liveVersion, ready: liveReady } = live;
 
   const addToast = useCallback((message, type = 'success') => {
     const id = Date.now() + Math.random();
@@ -199,13 +204,30 @@ export default function POS() {
     loadRecent();
   }, [loadFrequent, loadHeld, loadCustomers, loadRecent]);
 
-  // Debounced product search (falls back to the offline cache)
+  // Live sync: keep the customer dropdown and quick-shelf prices/stock fresh
+  // when other devices change them.
   useEffect(() => {
+    if (!liveReady) return;
+    setCustomers(getLiveCustomers());
+  }, [liveReady, liveVersion]);
+
+  useEffect(() => {
+    if (!liveReady) return;
+    setFrequent((f) => f.map((p) => getLiveProduct(p.id) || p));
+  }, [liveReady, liveVersion]);
+
+  // Debounced product search: uses the live synced catalog when it's ready
+  // (instant, no API call), otherwise falls back to the server / offline cache.
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([]);
+      return;
+    }
+    if (liveReady) {
+      setResults(liveSearch(query));
+      return;
+    }
     const t = setTimeout(async () => {
-      if (!query.trim()) {
-        setResults([]);
-        return;
-      }
       if (!isOnline()) {
         setResults(await searchCachedProducts(query));
         return;
@@ -220,7 +242,7 @@ export default function POS() {
       }
     }, 200);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [query, liveVersion, liveReady]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -274,6 +296,13 @@ export default function POS() {
       }
       const code = query.trim();
       if (!code) return;
+      if (liveReady) {
+        const product = liveByBarcode(code);
+        if (product) {
+          handleAdd(product);
+          return;
+        }
+      }
       if (!isOnline()) {
         const product = await findCachedProductByCode(code);
         if (product) handleAdd(product);
@@ -321,6 +350,12 @@ export default function POS() {
             if (lastScannedRef.current.has(code)) continue;
             lastScannedRef.current.add(code);
             setScanStatus('Found: ' + code);
+            const liveProduct = liveByBarcode(code);
+            if (liveProduct) {
+              stopScanner();
+              handleAdd(liveProduct);
+              return;
+            }
             getProductByBarcode(code)
               .then(({ product }) => {
                 stopScanner();

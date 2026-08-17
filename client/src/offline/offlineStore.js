@@ -8,7 +8,7 @@ import { listCustomers } from '../api/customers';
 import { createInvoice, holdInvoice, listHeldInvoices, deleteHeldInvoice, retrieveHeldInvoice } from '../api/invoices';
 import { getCurrentStore } from '../api/stores';
 
-const catalogKey = () => `catalog_${store.getState().store.currentStoreId || 1}`;
+export const catalogKey = () => `catalog_${store.getState().store.currentStoreId || 1}`;
 
 const subscribers = new Set();
 export const subscribeOffline = (fn) => {

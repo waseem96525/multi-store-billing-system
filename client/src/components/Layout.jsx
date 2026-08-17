@@ -9,6 +9,7 @@ import ForestBackground from './ForestBackground';
 import TickerBar from './TickerBar';
 import OfflineBanner from './OfflineBanner';
 import { refreshCatalog } from '../offline/offlineStore';
+import { startRealtime } from '../realtime/realtime';
 
 export default function Layout() {
   const dispatch = useDispatch();
@@ -41,6 +42,12 @@ export default function Layout() {
   useEffect(() => {
     if (navigator.onLine) refreshCatalog();
   }, [currentStoreId]);
+
+  // Live sync: products / stock / customers stream from Firebase so changes
+  // made on other devices appear here instantly.
+  useEffect(() => {
+    startRealtime();
+  }, []);
 
   const storeName =
     currentStore?.name ||

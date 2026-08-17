@@ -13,6 +13,7 @@ import { printLabels } from '../utils/print';
 import { exportCsv } from '../api/export';
 import { importProducts } from '../api/import';
 import { parseCsv, csvToObjects } from '../utils/csv';
+import useLiveCatalog from '../realtime/useLiveCatalog';
 
 const EMPTY = {
   name: '',
@@ -118,6 +119,16 @@ export default function Inventory() {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
   }, [q, lowStock]);
+
+  // Live sync: reload when products/stock change on any device (debounced so
+  // bursts of updates from another terminal are batched into one reload).
+  const live = useLiveCatalog();
+  useEffect(() => {
+    if (!live.ready) return;
+    const t = setTimeout(load, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.version]);
 
   const openAdd = () => {
     setEditing(null);
