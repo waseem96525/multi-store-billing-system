@@ -164,6 +164,54 @@ router.get('/payment-modes', asyncHandler(async (req, res) => {
   res.json({ modes });
 }));
 
+// Sales grouped by user (cashier) - who billed how much in the period
+router.get('/sales-by-user', asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+  const [invoices, allItems, users] = await Promise.all([
+    db.all('invoices'),
+    db.all('invoice_items'),
+    db.all('users'),
+  ]);
+  const userMap = new Map(users.map((u) => [u.id, u]));
+
+  const agg = new Map();
+  const invoiceUser = new Map();
+  for (const i of invoices) {
+    if (Number(i.store_id) !== Number(req.storeId) || !inRange(i.created_at, from, to)) continue;
+    invoiceUser.set(i.id, i.created_by);
+    const cur = agg.get(i.created_by) || { invoice_count: 0, revenue: 0, qty_sold: 0, credit_pending: 0 };
+    cur.invoice_count += 1;
+    cur.revenue += i.grand_total || 0;
+    if (i.status === 'credit') cur.credit_pending += (i.grand_total || 0) - (i.amount_paid || 0);
+    agg.set(i.created_by, cur);
+  }
+  for (const it of allItems) {
+    const uid = invoiceUser.get(it.invoice_id);
+    if (!uid) continue;
+    const row = agg.get(uid);
+    if (row) row.qty_sold += it.qty || 0;
+  }
+
+  const total = [...agg.values()].reduce((s, v) => s + v.revenue, 0);
+  const rows = [...agg.entries()]
+    .map(([uid, v]) => {
+      const u = userMap.get(uid);
+      return {
+        user_id: uid,
+        name: u ? u.name : uid,
+        role: u ? u.role : null,
+        invoice_count: v.invoice_count,
+        qty_sold: v.qty_sold,
+        revenue: Math.round(v.revenue * 100) / 100,
+        credit_pending: Math.round(v.credit_pending * 100) / 100,
+        avg_bill: v.invoice_count > 0 ? Math.round((v.revenue / v.invoice_count) * 100) / 100 : 0,
+        share_pct: total > 0 ? Math.round((v.revenue / total) * 1000) / 10 : 0,
+      };
+    })
+    .sort((a, b) => b.revenue - a.revenue);
+  res.json({ users: rows, total_revenue: total });
+}));
+
 // Expenses grouped by category
 router.get('/expense-breakdown', asyncHandler(async (req, res) => {
   const { from, to } = req.query;

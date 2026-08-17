@@ -6,6 +6,7 @@ import {
   getPaymentModes,
   getExpenseBreakdown,
   getProfit,
+  getSalesByUser,
 } from '../api/reports';
 
 function defaultRange() {
@@ -31,6 +32,7 @@ export default function Reports() {
   const [modes, setModes] = useState([]);
   const [breakdown, setBreakdown] = useState([]);
   const [profitProducts, setProfitProducts] = useState([]);
+  const [salesByUser, setSalesByUser] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -38,13 +40,14 @@ export default function Reports() {
     setError('');
     setLoading(true);
     try {
-      const [s, d, t, m, b, pr] = await Promise.all([
+      const [s, d, t, m, b, pr, su] = await Promise.all([
         getSummary(r),
         getDaily(r),
         getTopProducts(r),
         getPaymentModes(r),
         getExpenseBreakdown(r),
         getProfit(r),
+        getSalesByUser(r),
       ]);
       setSummary(s.summary);
       setDays(d.days);
@@ -52,6 +55,7 @@ export default function Reports() {
       setModes(m.modes);
       setBreakdown(b.breakdown);
       setProfitProducts(pr.products);
+      setSalesByUser(su.users);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to load reports');
     } finally {
@@ -96,6 +100,12 @@ export default function Reports() {
             : 0
         ).toFixed(1)}`
       )
+    );
+    lines.push('');
+    lines.push('Sales by User');
+    lines.push('User,Role,Invoices,Qty Sold,Revenue,Avg Bill,Credit Pending,Share %');
+    salesByUser.forEach((u) =>
+      lines.push(`${u.name},${u.role || ''},${u.invoice_count},${u.qty_sold},${u.revenue},${u.avg_bill},${u.credit_pending},${u.share_pct}`)
     );
     lines.push('');
     lines.push('Payment Modes');
@@ -296,6 +306,52 @@ export default function Reports() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow table-wrap">
+        <h2 className="font-semibold p-4 pb-2 text-slate-700">Sales by User</h2>
+        {salesByUser.length === 0 ? (
+          <div className="p-4 text-sm text-slate-400">No sales in this period</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-slate-600 text-left">
+              <tr>
+                <th className="p-2">User</th>
+                <th className="p-2">Role</th>
+                <th className="p-2 text-right">Invoices</th>
+                <th className="p-2 text-right">Items Sold</th>
+                <th className="p-2 text-right">Revenue</th>
+                <th className="p-2 text-right">Avg Bill</th>
+                <th className="p-2 text-right">Credit Pending</th>
+                <th className="p-2 text-right">Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {salesByUser.map((u) => (
+                <tr key={u.user_id} className="border-t">
+                  <td className="p-2 font-semibold">{u.name}</td>
+                  <td className="p-2 text-xs capitalize">{u.role || '-'}</td>
+                  <td className="p-2 text-right">{u.invoice_count}</td>
+                  <td className="p-2 text-right">{u.qty_sold}</td>
+                  <td className="p-2 text-right font-semibold text-green-700">{fmt(u.revenue)}</td>
+                  <td className="p-2 text-right">{fmt(u.avg_bill)}</td>
+                  <td className="p-2 text-right text-amber-600">{fmt(u.credit_pending)}</td>
+                  <td className="p-2 text-right">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-14 h-1.5 bg-slate-100 rounded overflow-hidden inline-block">
+                        <span
+                          className="block h-full bg-blue-500"
+                          style={{ width: `${Math.min(u.share_pct, 100)}%` }}
+                        />
+                      </span>
+                      {u.share_pct}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow table-wrap">

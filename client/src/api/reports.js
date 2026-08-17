@@ -9,3 +9,5 @@ export const getPaymentModes = (params) =>
 export const getExpenseBreakdown = (params) =>
   api.get('/reports/expense-breakdown', { params }).then((r) => r.data);
 export const getProfit = (params) => api.get('/reports/profit', { params }).then((r) => r.data);
+export const getSalesByUser = (params) =>
+  api.get('/reports/sales-by-user', { params }).then((r) => r.data);
