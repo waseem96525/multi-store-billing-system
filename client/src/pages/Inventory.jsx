@@ -64,6 +64,9 @@ export default function Inventory() {
   const [dragging, setDragging] = useState(false);
 
   const startDrag = (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const t = e.target;
+    if (t.closest && t.closest('input, select, textarea, button, a, [contenteditable]')) return;
     dragOrigin.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y };
     setDragging(true);
     e.preventDefault();
@@ -407,8 +410,9 @@ export default function Inventory() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div
             ref={panelRef}
+            onPointerDown={startDrag}
             style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
-            className="relative w-[min(92vw,24rem)]"
+            className="relative cursor-move w-[min(92vw,24rem)]"
           >
             <form
               ref={formRef}
@@ -417,7 +421,6 @@ export default function Inventory() {
             >
             <div
               className="flex items-center justify-between mb-2 cursor-move select-none touch-none"
-              onPointerDown={startDrag}
             >
               <h2 className="font-bold text-lg">
                 {editing ? 'Edit Product' : 'Add Product'}
