@@ -6,6 +6,7 @@ import { setStores, setCurrentStore, setCurrentStoreInfo } from '../store/slices
 import { listStores, getCurrentStore } from '../api/stores';
 import { getTheme, toggleTheme } from '../utils/theme';
 import ForestBackground from './ForestBackground';
+import AppBackground from './AppBackground';
 import TickerBar from './TickerBar';
 import OfflineBanner from './OfflineBanner';
 import { refreshCatalog } from '../offline/offlineStore';
@@ -53,6 +54,8 @@ export default function Layout() {
     currentStore?.name ||
     stores.find((s) => s.id === currentStoreId)?.name ||
     'Retail Shop';
+
+  const background = currentStore?.background || '';
 
   const handleLogout = () => {
     dispatch(logout());
@@ -171,7 +174,7 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-transparent">
-      <ForestBackground />
+      <AppBackground image={background} />
       {/* Mobile top bar */}
       <header className="lg:hidden fixed top-0 inset-x-0 z-40 bg-slate-800 text-white flex items-center justify-between px-3 py-2.5 shadow">
         <button

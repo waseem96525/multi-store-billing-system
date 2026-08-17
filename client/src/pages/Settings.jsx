@@ -3,6 +3,7 @@ import { getCurrentStore, updateCurrentStore } from '../api/stores';
 import { useDispatch } from 'react-redux';
 import { setCurrentStoreInfo } from '../store/slices/storeSlice';
 import { downloadBackup } from '../api/backup';
+import { fileToDataUrl } from '../utils/image';
 import {
   isSupported,
   subscribe,
@@ -21,9 +22,13 @@ export default function Settings() {
     phone: '',
     gstin: '',
     receipt_footer: '',
+    background: '',
   });
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [bgPreview, setBgPreview] = useState('');
+  const [bgBusy, setBgBusy] = useState(false);
+  const [bgMsg, setBgMsg] = useState('');
 
   // Barcode printer (USB, Web Serial)
   const supported = isSupported();
@@ -76,7 +81,9 @@ export default function Settings() {
           phone: store.phone || '',
           gstin: store.gstin || '',
           receipt_footer: store.receipt_footer || '',
+          background: store.background || '',
         });
+        setBgPreview(store.background || '');
         dispatch(setCurrentStoreInfo(store));
       })
       .catch((e) => setError(e.response?.data?.error || 'Failed to load settings'));
@@ -90,6 +97,7 @@ export default function Settings() {
       const { store } = await updateCurrentStore(form);
       setMsg('Settings saved');
       dispatch(setCurrentStoreInfo(store));
+      setBgPreview(store.background || '');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save');
     }
@@ -262,6 +270,92 @@ export default function Settings() {
             className="flex-1 border py-2 rounded hover:bg-slate-50 disabled:opacity-50"
           >
             Test Print
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-4 max-w-md space-y-3">
+        <h2 className="font-semibold text-slate-700">App Wallpaper / Background</h2>
+        <p className="text-sm text-slate-500">
+          Set a custom background for the whole app using an image URL or by uploading an image.
+          It overrides the default scenery. Leave empty to use the default.
+        </p>
+
+        {bgPreview && (
+          <div
+            className="w-full h-28 rounded border border-slate-200 bg-center bg-cover"
+            style={{ backgroundImage: `url("${bgPreview}")` }}
+            aria-label="Background preview"
+          />
+        )}
+
+        <div>
+          <label className={label}>Image URL</label>
+          <input
+            className={field}
+            placeholder="https://example.com/wallpaper.jpg"
+            value={form.background && !bgPreview.startsWith('data:') ? form.background : ''}
+            onChange={(e) => {
+              setForm({ ...form, background: e.target.value });
+              setBgPreview(e.target.value);
+            }}
+          />
+        </div>
+
+        <div>
+          <label className={label}>Or upload an image</label>
+          <input
+            type="file"
+            accept="image/*"
+            className="w-full text-sm"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              setBgMsg('');
+              if (!file) return;
+              setBgBusy(true);
+              try {
+                const dataUrl = await fileToDataUrl(file);
+                setForm({ ...form, background: dataUrl });
+                setBgPreview(dataUrl);
+              } catch (err) {
+                setBgMsg(err.message || 'Upload failed');
+              } finally {
+                setBgBusy(false);
+                e.target.value = '';
+              }
+            }}
+          />
+          {bgBusy && <div className="text-sm text-slate-500 mt-1">Processing image…</div>}
+          {bgMsg && <div className="text-sm text-red-600 mt-1">{bgMsg}</div>}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              setForm({ ...form, background: '' });
+              setBgPreview('');
+            }}
+            className="flex-1 border py-2 rounded hover:bg-slate-50"
+          >
+            Clear background
+          </button>
+          <button
+            onClick={async () => {
+              setError('');
+              setBgMsg('');
+              try {
+                const { store } = await updateCurrentStore({ background: form.background });
+                setMsg('Background saved');
+                dispatch(setCurrentStoreInfo(store));
+                setBgPreview(store.background || '');
+              } catch (err) {
+                setBgMsg(err.response?.data?.error || 'Failed to save background');
+              }
+            }}
+            className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700"
+            disabled={bgBusy}
+          >
+            Save Background
           </button>
         </div>
       </div>
