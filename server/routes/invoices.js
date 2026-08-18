@@ -95,19 +95,31 @@ router.post('/', asyncHandler(async (req, res) => {
   ];
   if (ids.length === 0) return res.status(400).json({ error: 'Invalid items' });
 
-  // All reads in 3 parallel round trips
-  const [allProducts, stockRows, store] = await Promise.all([
-    db.all('products'),
-    db.where('product_stock', (r) => Number(r.store_id) === Number(req.storeId)),
+  // Fetch ONLY the products and stock rows we actually need, in parallel.
+  // Loading the whole products/stock tables on every checkout was the main
+  // bottleneck as the catalog grew - a bill with 10 items no longer has to
+  // pull thousands of unrelated products over the wire.
+  const [productRows, stockRows, store, invoiceNoRaw] = await Promise.all([
+    Promise.all(ids.map((id) => db.get('products', id))),
+    Promise.all(ids.map((id) => db.get('product_stock', db.stockKey(id, req.storeId)))),
     db.get('stores', req.storeId),
+    // Pull the invoice-number counter here too so it runs in parallel with
+    // the reads above instead of adding a separate sequential round trip.
+    db.nextId('invoice_no'),
   ]);
-  const productMap = new Map(allProducts.filter((p) => ids.includes(p.id)).map((p) => [p.id, p]));
-  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r.stock_qty]));
+  const productMap = new Map();
+  for (const p of productRows) {
+    if (p) productMap.set(Number(p.id), p);
+  }
+  const stockMap = new Map();
+  for (const s of stockRows) {
+    if (s) stockMap.set(Number(s.product_id), Number(s.stock_qty) || 0);
+  }
   for (const pid of ids) {
     if (!productMap.has(pid)) return res.status(400).json({ error: 'Product not found: ' + pid });
   }
 
-  const invoiceNo = 'INV-' + String((await db.nextId('invoice_no'))).padStart(4, '0');
+  const invoiceNo = 'INV-' + String(invoiceNoRaw).padStart(4, '0');
 
   let subtotal = 0;
   let taxTotal = 0;
