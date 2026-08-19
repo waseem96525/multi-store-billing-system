@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -9,7 +9,7 @@ const router = express.Router();
 router.use(authenticate, attachStore);
 
 // Audit log with optional filters (admin only)
-router.get('/', authorize('admin'), asyncHandler(async (req, res) => {
+router.get('/', requirePerm('activity.view'), asyncHandler(async (req, res) => {
   const { action, user_id, limit = 300 } = req.query;
   let logs = await db.all('activity_logs');
   if (action) logs = logs.filter((l) => l.action === action);
@@ -32,7 +32,7 @@ router.get('/', authorize('admin'), asyncHandler(async (req, res) => {
 }));
 
 // Distinct users who have activity entries (for the filter dropdown)
-router.get('/users', authorize('admin'), asyncHandler(async (req, res) => {
+router.get('/users', requirePerm('activity.view'), asyncHandler(async (req, res) => {
   const [logs, users] = await Promise.all([db.all('activity_logs'), db.all('users')]);
   const userMap = new Map(users.map((u) => [u.id, u]));
   const seen = new Set();

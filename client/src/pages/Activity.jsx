@@ -1,16 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { listActivity, listActivityUsers } from '../api/activity';
+import { can, PERM } from '../utils/permissions';
 
 const ACTION_COLORS = {
   login: 'text-blue-600',
   sale: 'text-emerald-600',
   purchase: 'text-blue-600',
   return: 'text-amber-600',
+  return_requested: 'text-amber-600',
+  return_rejected: 'text-red-600',
   transfer: 'text-purple-600',
   expense: 'text-orange-600',
   expense_deleted: 'text-red-600',
   stock_adjustment: 'text-teal-600',
+  cash_open: 'text-emerald-600',
+  cash_close: 'text-emerald-600',
+  invoice_void: 'text-red-600',
+  invoice_edited: 'text-slate-600',
   product_created: 'text-green-600',
   product_updated: 'text-slate-600',
   product_deleted: 'text-red-600',
@@ -54,8 +61,12 @@ export default function Activity() {
     return () => clearTimeout(t);
   }, [actionFilter, userFilter, limit]);
 
-  if (user?.role !== 'admin') {
-    return <div className="text-red-600 text-sm">This page is only available to administrators.</div>;
+  if (!can(user, PERM.ACTIVITY_VIEW)) {
+    return (
+      <div className="text-red-600 text-sm">
+        This page is only available to administrators and managers.
+      </div>
+    );
   }
 
   const color = (action) => ACTION_COLORS[action] || 'text-slate-600';

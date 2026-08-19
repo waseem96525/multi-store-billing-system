@@ -1,4 +1,5 @@
 const { verifyFirebaseToken } = require('../utils/auth');
+const { can } = require('../utils/permissions');
 const db = require('../db');
 const { storage } = require('../fb/context');
 
@@ -48,4 +49,16 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { authenticate, authorize };
+// Granular permission check. Pass one or more permission names; the request
+// passes if the user's role has any of them.
+function requirePerm(...perms) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthenticated' });
+    if (perms.length && !perms.some((p) => can(req.user.role, p))) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permission' });
+    }
+    next();
+  };
+}
+
+module.exports = { authenticate, authorize, requirePerm };

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
@@ -32,7 +32,7 @@ router.get('/', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/', requirePerm('expenses.create'), asyncHandler(async (req, res) => {
   const { category, amount, note, expense_date } = req.body || {};
   if (!category) return res.status(400).json({ error: 'category required' });
   if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'Valid amount required' });
@@ -54,7 +54,7 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
   res.status(201).json({ expense });
 }));
 
-router.delete('/:id', authorize('admin'), asyncHandler(async (req, res) => {
+router.delete('/:id', requirePerm('expenses.delete'), asyncHandler(async (req, res) => {
   const expense = await db.get('expenses', req.params.id);
   if (!expense || Number(expense.store_id) !== Number(req.storeId)) {
     return res.status(404).json({ error: 'Expense not found' });

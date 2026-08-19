@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity, prepareLog } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
@@ -47,7 +47,7 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // Create a transfer from the current store to another store
-router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/', requirePerm('transfers.create'), asyncHandler(async (req, res) => {
   const { to_store_id, note, items } = req.body || {};
   if (!to_store_id) return res.status(400).json({ error: 'to_store_id required' });
   if (Number(to_store_id) === Number(req.storeId)) {

@@ -3,6 +3,7 @@ const db = require('../db');
 const { signInWithPassword, createUser, refreshIdToken, verifyFirebaseToken, ensureServerToken } = require('../utils/auth');
 const { storage } = require('../fb/context');
 const { authenticate, authorize } = require('../middleware/auth');
+const { ALL_ROLES } = require('../utils/permissions');
 const { logActivity } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -85,8 +86,7 @@ router.post('/register', authenticate, authorize('admin'), asyncHandler(async (r
   if (String(password).length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
-  const allowedRoles = ['admin', 'cashier', 'inventory'];
-  const userRole = allowedRoles.includes(role) ? role : 'cashier';
+  const userRole = ALL_ROLES.includes(role) ? role : 'cashier';
   const userStoreId = Number(store_id) || req.user.store_id || 1;
   const store = await db.get('stores', userStoreId);
   if (!store) return res.status(400).json({ error: 'Invalid store' });

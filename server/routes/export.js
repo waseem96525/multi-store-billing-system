@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { can } = require('../utils/permissions');
 const { attachStore } = require('../middleware/store');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -16,6 +17,7 @@ const esc = (v) => {
 
 const ENTITIES = {
   products: {
+    perm: 'inventory.view',
     file: 'products.csv',
     async rows(storeId) {
       const [products, stockRows, categories] = await Promise.all([
@@ -58,6 +60,7 @@ const ENTITIES = {
     ],
   },
   invoices: {
+    perm: 'invoice.view',
     file: 'invoices.csv',
     async rows(storeId) {
       const [invoices, users, customers] = await Promise.all([
@@ -92,6 +95,7 @@ const ENTITIES = {
     ],
   },
   customers: {
+    perm: 'invoice.view',
     file: 'customers.csv',
     storeScoped: false,
     async rows(storeId) {
@@ -103,6 +107,7 @@ const ENTITIES = {
     ],
   },
   suppliers: {
+    perm: 'invoice.view',
     file: 'suppliers.csv',
     storeScoped: false,
     async rows(storeId) {
@@ -114,6 +119,7 @@ const ENTITIES = {
     ],
   },
   purchases: {
+    perm: 'purchases.create',
     file: 'purchases.csv',
     async rows(storeId) {
       const [purchases, suppliers, users] = await Promise.all([
@@ -140,6 +146,7 @@ const ENTITIES = {
     ],
   },
   expenses: {
+    perm: 'expenses.create',
     file: 'expenses.csv',
     async rows(storeId) {
       const [expenses, users] = await Promise.all([
@@ -164,6 +171,7 @@ const ENTITIES = {
     ],
   },
   returns: {
+    perm: 'returns.create',
     file: 'returns.csv',
     async rows(storeId) {
       const [returns, invoices, users] = await Promise.all([
@@ -190,6 +198,7 @@ const ENTITIES = {
     ],
   },
   transfers: {
+    perm: 'transfers.create',
     file: 'transfers.csv',
     async rows(storeId) {
       const [transfers, stores, users, allItems] = await Promise.all([
@@ -227,6 +236,10 @@ const ENTITIES = {
 router.get('/:entity', asyncHandler(async (req, res) => {
   const entity = ENTITIES[req.params.entity];
   if (!entity) return res.status(400).json({ error: 'Unknown export entity' });
+  // Each entity requires its matching view permission
+  if (entity.perm && !can(req.user.role, entity.perm)) {
+    return res.status(403).json({ error: 'Forbidden: insufficient permission' });
+  }
   const rows = await entity.rows(req.storeId);
   const header = entity.columns.map(([, label]) => label);
   const lines = [header.map(esc).join(',')];

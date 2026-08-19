@@ -41,6 +41,7 @@ import {
 } from '../offline/offlineStore';
 import SendInvoiceButtons from '../components/SendInvoiceButtons';
 import useLiveCatalog from '../realtime/useLiveCatalog';
+import DrawerWidget from '../components/DrawerWidget';
 import { liveSearch, liveByBarcode, getLiveCustomers, getLiveProduct } from '../realtime/realtime';
 
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -766,14 +767,17 @@ export default function POS() {
       <div className="lg:col-span-2 bg-white rounded-lg shadow p-4 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold text-slate-800">Point of Sale</h1>
-          <button
-            type="button"
-            onClick={handleHold}
-            className="text-xs px-3 py-1.5 rounded-full bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
-            title="Park current bill (F3)"
-          >
-            ⏸ Park (F3)
-          </button>
+          <div className="flex items-center gap-2">
+            <DrawerWidget />
+            <button
+              type="button"
+              onClick={handleHold}
+              className="text-xs px-3 py-1.5 rounded-full bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
+              title="Park current bill (F3)"
+            >
+              ⏸ Park (F3)
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2 mb-2">

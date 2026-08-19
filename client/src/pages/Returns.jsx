@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
 import { listInvoices } from '../api/invoices';
-import { listReturns, getInvoiceReturnItems, createReturn } from '../api/returns';
+import {
+  listReturns,
+  getInvoiceReturnItems,
+  createReturn,
+  approveReturn,
+  rejectReturn,
+} from '../api/returns';
 import { exportCsv } from '../api/export';
+import { can, PERM } from '../utils/permissions';
 
 export default function Returns() {
+  const user = useSelector((s) => s.auth.user);
   const [invoices, setInvoices] = useState([]);
   const [returns, setReturns] = useState([]);
   const [invoiceId, setInvoiceId] = useState('');
@@ -13,6 +22,8 @@ export default function Returns() {
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const [rejectId, setRejectId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const load = async () => {
     try {
@@ -62,7 +73,11 @@ export default function Returns() {
         reason,
         items: selected,
       });
-      setMsg(`Return recorded - refund Rs ${Number(ret.total_refund).toFixed(2)}`);
+      setMsg(
+        ret.status === 'approved'
+          ? `Return recorded - refund Rs ${Number(ret.total_refund).toFixed(2)}`
+          : `Return request submitted (Rs ${Number(ret.total_refund).toFixed(2)}) - pending manager approval`
+      );
       setReason('');
       setInvoiceId('');
       setInvoice(null);
@@ -71,6 +86,30 @@ export default function Returns() {
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create return');
+    }
+  };
+
+  const handleApprove = async (r) => {
+    if (!window.confirm(`Approve return #${r.id} (refund Rs ${Number(r.total_refund).toFixed(2)})? Stock will be restored.`)) return;
+    setError('');
+    try {
+      await approveReturn(r.id);
+      load();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Approval failed');
+    }
+  };
+
+  const handleReject = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await rejectReturn(rejectId, rejectReason.trim() || undefined);
+      setRejectId(null);
+      setRejectReason('');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Rejection failed');
     }
   };
 
@@ -191,6 +230,8 @@ export default function Returns() {
               <th className="p-2">Reason</th>
               <th className="p-2 text-right">Refund</th>
               <th className="p-2">By</th>
+              <th className="p-2">Status</th>
+              <th className="p-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -206,11 +247,37 @@ export default function Returns() {
                   -Rs {Number(r.total_refund).toFixed(2)}
                 </td>
                 <td className="p-2 text-xs">{r.created_by_name || '-'}</td>
+                <td className="p-2">
+                  {r.status === 'approved' ? (
+                    <span className="text-green-600 font-semibold">Approved</span>
+                  ) : r.status === 'rejected' ? (
+                    <span className="text-slate-500">
+                      Rejected
+                      {r.reject_reason ? (
+                        <span className="block text-xs">({r.reject_reason})</span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <span className="text-amber-600 font-semibold">Pending</span>
+                  )}
+                </td>
+                <td className="p-2 text-right whitespace-nowrap">
+                  {r.status === 'pending' && can(user, PERM.REFUND_APPROVE) && (
+                    <>
+                      <button className="text-green-600 mr-2" onClick={() => handleApprove(r)}>
+                        Approve
+                      </button>
+                      <button className="text-red-600" onClick={() => setRejectId(r.id)}>
+                        Reject
+                      </button>
+                    </>
+                  )}
+                </td>
               </tr>
             ))}
             {returns.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-4 text-center text-slate-400">
+                <td colSpan={8} className="p-4 text-center text-slate-400">
                   No returns recorded
                 </td>
               </tr>
@@ -218,6 +285,42 @@ export default function Returns() {
           </tbody>
         </table>
       </div>
+
+      {rejectId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <form
+            onSubmit={handleReject}
+            className="bg-white p-5 rounded-lg w-[min(92vw,22rem)] space-y-3"
+          >
+            <h2 className="font-bold text-lg">Reject Return #{rejectId}</h2>
+            <input
+              className="w-full border rounded px-2 py-1"
+              placeholder="Rejection reason (optional)"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                className="flex-1 bg-red-600 text-white py-2 rounded hover:bg-red-700"
+              >
+                Reject
+              </button>
+              <button
+                type="button"
+                className="flex-1 border py-2 rounded"
+                onClick={() => {
+                  setRejectId(null);
+                  setRejectReason('');
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

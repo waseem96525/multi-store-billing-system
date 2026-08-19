@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
@@ -11,7 +11,7 @@ router.get('/', authenticate, asyncHandler(async (req, res) => {
   res.json({ suppliers });
 }));
 
-router.post('/', authenticate, authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/', authenticate, requirePerm('inventory.edit', 'purchases.create'), asyncHandler(async (req, res) => {
   const { name, phone, email, address } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   const supplier = await db.insert('suppliers', {
@@ -24,7 +24,7 @@ router.post('/', authenticate, authorize('admin', 'inventory'), asyncHandler(asy
   res.status(201).json({ supplier });
 }));
 
-router.put('/:id', authenticate, authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.put('/:id', authenticate, requirePerm('inventory.edit', 'purchases.create'), asyncHandler(async (req, res) => {
   const id = req.params.id;
   const existing = await db.get('suppliers', id);
   if (!existing) return res.status(404).json({ error: 'Supplier not found' });
@@ -38,7 +38,7 @@ router.put('/:id', authenticate, authorize('admin', 'inventory'), asyncHandler(a
   res.json({ supplier });
 }));
 
-router.delete('/:id', authenticate, authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.delete('/:id', authenticate, requirePerm('inventory.edit', 'purchases.create'), asyncHandler(async (req, res) => {
   const existing = await db.get('suppliers', req.params.id);
   if (!existing) return res.status(404).json({ error: 'Supplier not found' });
   await db.remove('suppliers', req.params.id);

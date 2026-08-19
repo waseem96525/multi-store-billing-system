@@ -28,6 +28,7 @@ const T = {
   stock_transfers: 'stock_transfers',
   stock_transfer_items: 'stock_transfer_items',
   activity_logs: 'activity_logs',
+  cash_sessions: 'cash_sessions',
 };
 
 const stockKey = (productId, storeId) => `${productId}_${storeId}`;

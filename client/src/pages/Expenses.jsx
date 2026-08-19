@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
 import { listExpenses, createExpense, deleteExpense } from '../api/expenses';
 import { exportCsv } from '../api/export';
+import { can, PERM } from '../utils/permissions';
 
 const CATEGORIES = [
   'Rent',
@@ -16,6 +18,8 @@ const CATEGORIES = [
 const EMPTY = { category: '', amount: '', note: '', expense_date: new Date().toISOString().slice(0, 10) };
 
 export default function Expenses() {
+  const user = useSelector((s) => s.auth.user);
+  const canDelete = can(user, PERM.EXPENSES_DELETE);
   const [expenses, setExpenses] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState('');
@@ -147,9 +151,11 @@ export default function Expenses() {
                 <td className="p-2 text-right font-semibold">Rs {Number(e.amount).toFixed(2)}</td>
                 <td className="p-2 text-xs">{e.created_by_name || '-'}</td>
                 <td className="p-2 text-right">
-                  <button className="text-red-600 text-xs" onClick={() => handleDelete(e.id)}>
-                    Delete
-                  </button>
+                  {canDelete && (
+                    <button className="text-red-600 text-xs" onClick={() => handleDelete(e.id)}>
+                      Delete
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

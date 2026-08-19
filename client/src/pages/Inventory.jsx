@@ -20,6 +20,8 @@ import { exportCsv } from '../api/export';
 import { importProducts } from '../api/import';
 import { parseCsv, csvToObjects } from '../utils/csv';
 import useLiveCatalog from '../realtime/useLiveCatalog';
+import { useSelector } from 'react-redux';
+import { can, PERM } from '../utils/permissions';
 
 const EMPTY = {
   name: '',
@@ -42,6 +44,8 @@ const EMPTY = {
 };
 
 export default function Inventory() {
+  const user = useSelector((s) => s.auth.user);
+  const canEdit = can(user, PERM.INVENTORY_EDIT);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [q, setQ] = useState('');
@@ -56,6 +60,8 @@ export default function Inventory() {
   const [showLabels, setShowLabels] = useState(false);
   const [labelSel, setLabelSel] = useState({});
   const [labelCopies, setLabelCopies] = useState(1);
+  const [labelSize, setLabelSize] = useState('58x27');
+  const [showLabelCode, setShowLabelCode] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState('add');
@@ -272,7 +278,7 @@ export default function Inventory() {
       copies: Number(labelCopies) || 1,
     }));
     if (items.length === 0) return;
-    printLabels(items);
+    printLabels(items, { size: labelSize, showCode: showLabelCode });
   };
 
   const toLabelItems = (list) =>
@@ -301,7 +307,7 @@ export default function Inventory() {
 
   const handlePrintOne = (p) => {
     if (printerAuto && printerConnected()) handlePrintSerial([p]);
-    else printLabels(toLabelItems([p]));
+    else printLabels(toLabelItems([p]), { size: labelSize, showCode: showLabelCode });
   };
 
   const handlePrintLabelsSerial = () => {
@@ -352,12 +358,14 @@ export default function Inventory() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold text-slate-800">Inventory</h1>
         <div className="flex flex-wrap gap-2">
-          <button
-            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
-            onClick={() => setShowCategories(true)}
-          >
-            Categories
-          </button>
+          {canEdit && (
+            <button
+              className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+              onClick={() => setShowCategories(true)}
+            >
+              Categories
+            </button>
+          )}
           <button
             className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
             onClick={openLabels}
@@ -371,19 +379,23 @@ export default function Inventory() {
           >
             Export CSV
           </button>
-          <button
-            className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
-            onClick={openImport}
-            title="Bulk load products and stock from a CSV file"
-          >
-            Import CSV
-          </button>
-          <button
-            className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700"
-            onClick={openAdd}
-          >
-            + Add Product
-          </button>
+          {canEdit && (
+            <>
+              <button
+                className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+                onClick={openImport}
+                title="Bulk load products and stock from a CSV file"
+              >
+                Import CSV
+              </button>
+              <button
+                className="bg-slate-800 text-white px-3 py-2 rounded hover:bg-slate-700"
+                onClick={openAdd}
+              >
+                + Add Product
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -443,18 +455,22 @@ export default function Inventory() {
                 </td>
                 <td className="p-2 text-right">{p.reorder_level}</td>
                 <td className="p-2 text-right whitespace-nowrap">
-                  <button className="text-blue-600 mr-2" onClick={() => openEdit(p)}>
-                    Edit
-                  </button>
+                  {canEdit && (
+                    <>
+                      <button className="text-blue-600 mr-2" onClick={() => openEdit(p)}>
+                        Edit
+                      </button>
+                      <button className="text-red-600 mr-2" onClick={() => handleDelete(p)}>
+                        Delete
+                      </button>
+                    </>
+                  )}
                   <button
                     className="text-slate-500 mr-2"
                     title="Print barcode label"
                     onClick={() => handlePrintOne(p)}
                   >
                     Print
-                  </button>
-                  <button className="text-red-600" onClick={() => handleDelete(p)}>
-                    Delete
                   </button>
                 </td>
               </tr>
@@ -734,16 +750,39 @@ export default function Inventory() {
       {showLabels && (        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white p-5 rounded-lg w-[min(92vw,26rem)] max-h-[90vh] overflow-auto space-y-3">
             <h2 className="font-bold text-lg">Print Barcode Labels</h2>
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <label>Copies per label</label>
-              <input
-                type="number"
-                min={1}
-                max={99}
-                className="w-16 border rounded px-2 py-1"
-                value={labelCopies}
-                onChange={(e) => setLabelCopies(Math.max(1, Number(e.target.value) || 1))}
-              />
+            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+              <label className="flex items-center gap-2">
+                Copies per label
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  className="w-16 border rounded px-2 py-1"
+                  value={labelCopies}
+                  onChange={(e) => setLabelCopies(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                Label size
+                <select
+                  className="border rounded px-2 py-1"
+                  value={labelSize}
+                  onChange={(e) => setLabelSize(e.target.value)}
+                >
+                  <option value="58x27">58 x 27 mm (thermal)</option>
+                  <option value="40x25">40 x 25 mm</option>
+                  <option value="60x40">60 x 40 mm</option>
+                  <option value="100x50">100 x 50 mm</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showLabelCode}
+                  onChange={(e) => setShowLabelCode(e.target.checked)}
+                />
+                Show code text
+              </label>
             </div>
             <div className="flex items-center gap-2 text-sm">
               <button

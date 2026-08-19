@@ -10,3 +10,6 @@ export const retrieveHeldInvoice = (id) =>
   api.post(`/invoices/retrieve/${id}`).then((r) => r.data);
 export const deleteHeldInvoice = (id) =>
   api.delete(`/invoices/held/${id}`).then((r) => r.data);
+export const voidInvoice = (id, reason) =>
+  api.post(`/invoices/${id}/void`, { reason }).then((r) => r.data);
+export const editInvoice = (id, data) => api.put(`/invoices/${id}`, data).then((r) => r.data);

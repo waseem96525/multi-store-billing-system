@@ -1,8 +1,9 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity, prepareLog } = require('../utils/activity');
+const { can } = require('../utils/permissions');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
@@ -97,7 +98,11 @@ router.get('/invoice/:invoiceId/items', asyncHandler(async (req, res) => {
       };
     });
   const returnIds = new Set(
-    allReturns.filter((r) => Number(r.invoice_id) === Number(invoice.id)).map((r) => r.id)
+    allReturns
+      .filter(
+        (r) => Number(r.invoice_id) === Number(invoice.id) && r.status !== 'rejected'
+      )
+      .map((r) => r.id)
   );
   const returnedMap = new Map();
   for (const ri of allReturnItems) {
@@ -111,8 +116,13 @@ router.get('/invoice/:invoiceId/items', asyncHandler(async (req, res) => {
   res.json({ invoice, items });
 }));
 
-router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+// Create a return/refund. Cashiers create it as 'pending' (a manager/admin
+// must approve it, which is what actually restores stock and logs the
+// refund); users with the refund.approve permission create it directly as
+// 'approved'.
+router.post('/', requirePerm('returns.create'), asyncHandler(async (req, res) => {
   const { invoice_id, reason, items } = req.body || {};
+  const autoApprove = can(req.user.role, 'refund.approve');
   if (!invoice_id) return res.status(400).json({ error: 'invoice_id required' });
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'At least one item is required' });
@@ -138,7 +148,11 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
     if (!unitPriceMap.has(it.product_id)) unitPriceMap.set(it.product_id, it.unit_price);
   }
   const returnIds = new Set(
-    allReturns.filter((r) => Number(r.invoice_id) === Number(invoice.id)).map((r) => r.id)
+    allReturns
+      .filter(
+        (r) => Number(r.invoice_id) === Number(invoice.id) && r.status !== 'rejected'
+      )
+      .map((r) => r.id)
   );
   const returnedMap = new Map();
   for (const ri of allReturnItems) {
@@ -171,15 +185,11 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
     db.nextId('returns'),
     prepareLog(
       req.user,
-      'return',
-      `Return #? on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}`,
+      autoApprove ? 'return' : 'return_requested',
+      `${autoApprove ? 'Return' : 'Return request'} on ${invoice.invoice_no} · ${lineItems.length} item(s) · refund ₹${totalRefund.toFixed(2)}${autoApprove ? '' : ' · awaiting approval'}`,
       req.storeId
     ),
   ]);
-
-  const stockAgg = new Map();
-  for (const l of lineItems) stockAgg.set(l.product_id, (stockAgg.get(l.product_id) || 0) + l.qty);
-  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
 
   const now = db.now();
   const paths = {};
@@ -191,6 +201,7 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
     total_refund: totalRefund,
     created_by: req.user.id,
     created_at: now,
+    status: autoApprove ? 'approved' : 'pending',
   };
   lineItems.forEach((l, i) => {
     paths[`return_items/${returnId}_${i + 1}`] = {
@@ -199,6 +210,60 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
       ...l,
     };
   });
+  if (autoApprove) {
+    const stockAgg = new Map();
+    for (const l of lineItems) stockAgg.set(l.product_id, (stockAgg.get(l.product_id) || 0) + l.qty);
+    const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
+    for (const [pid, qty] of stockAgg) {
+      const cur = stockMap.get(pid);
+      paths[`product_stock/${db.stockKey(pid, req.storeId)}`] = {
+        product_id: pid,
+        store_id: req.storeId,
+        stock_qty: (cur ? cur.stock_qty : 0) + qty,
+        reorder_level: cur ? cur.reorder_level : 0,
+      };
+    }
+  }
+  log.value.details = log.value.details.replace('#?', `#${returnId}`);
+  paths[log.key] = log.value;
+  await db.patchMulti(paths);
+
+  const ret = {
+    id: returnId,
+    store_id: req.storeId,
+    invoice_id: invoice.id,
+    reason: reason || null,
+    total_refund: totalRefund,
+    created_by: req.user.id,
+    created_at: now,
+    status: autoApprove ? 'approved' : 'pending',
+  };
+  res.status(201).json({ return: ret });
+}));
+
+// Approve a pending return: restores stock and records the refund.
+router.patch('/:id/approve', requirePerm('refund.approve'), asyncHandler(async (req, res) => {
+  const ret = await db.get('returns', req.params.id);
+  if (!ret || Number(ret.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Return not found' });
+  }
+  if (ret.status !== 'pending') {
+    return res.status(409).json({ error: 'Only pending returns can be approved' });
+  }
+  const invoice = ret.invoice_id ? await db.get('invoices', ret.invoice_id) : null;
+  if (invoice && invoice.status === 'void') {
+    return res.status(409).json({ error: 'Cannot approve a return on a voided invoice' });
+  }
+  const [allReturnItems, stockRows] = await Promise.all([
+    db.all('return_items'),
+    db.where('product_stock', (r) => Number(r.store_id) === Number(req.storeId)),
+  ]);
+  const items = allReturnItems.filter((it) => Number(it.return_id) === Number(ret.id));
+  const stockAgg = new Map();
+  for (const l of items) stockAgg.set(l.product_id, (stockAgg.get(l.product_id) || 0) + (l.qty || 0));
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
+
+  const paths = {};
   for (const [pid, qty] of stockAgg) {
     const cur = stockMap.get(pid);
     paths[`product_stock/${db.stockKey(pid, req.storeId)}`] = {
@@ -208,12 +273,43 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
       reorder_level: cur ? cur.reorder_level : 0,
     };
   }
-  log.value.details = log.value.details.replace('#?', `#${returnId}`);
+  paths[`returns/${ret.id}`] = {
+    ...ret,
+    status: 'approved',
+    approved_by: req.user.id,
+    approved_at: db.now(),
+  };
+  const [log] = await Promise.all([
+    prepareLog(
+      req.user,
+      'return',
+      `Return #${ret.id} approved · ${invoice ? invoice.invoice_no : ''} · refund ₹${Number(ret.total_refund || 0).toFixed(2)}`,
+      req.storeId
+    ),
+  ]);
   paths[log.key] = log.value;
   await db.patchMulti(paths);
+  res.json({ success: true, status: 'approved' });
+}));
 
-  const ret = { id: returnId, store_id: req.storeId, invoice_id: invoice.id, reason: reason || null, total_refund: totalRefund, created_by: req.user.id, created_at: now };
-  res.status(201).json({ return: ret });
+// Reject a pending return (no stock change).
+router.patch('/:id/reject', requirePerm('refund.approve'), asyncHandler(async (req, res) => {
+  const ret = await db.get('returns', req.params.id);
+  if (!ret || Number(ret.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Return not found' });
+  }
+  if (ret.status !== 'pending') {
+    return res.status(409).json({ error: 'Only pending returns can be rejected' });
+  }
+  const reason = String((req.body && req.body.reason) || '').trim();
+  await db.update('returns', ret.id, {
+    status: 'rejected',
+    reject_reason: reason || null,
+    rejected_by: req.user.id,
+    rejected_at: db.now(),
+  });
+  logActivity(req.user, 'return_rejected', `Return #${ret.id} rejected${reason ? ` · ${reason}` : ''}`, req.storeId);
+  res.json({ success: true, status: 'rejected' });
 }));
 
 module.exports = router;

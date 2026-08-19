@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -31,7 +31,7 @@ const TABLES = [
 ];
 
 // Download a full JSON snapshot of the Firebase database (admin only).
-router.get('/', authorize('admin'), asyncHandler(async (req, res) => {
+router.get('/', requirePerm('backup.download'), asyncHandler(async (req, res) => {
   const raw = await db.getAll();
   const snapshot = {};
   for (const t of TABLES) {

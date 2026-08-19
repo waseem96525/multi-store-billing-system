@@ -1,8 +1,8 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
-const { logActivity, prepareLog } = require('../utils/activity');
+const { prepareLog } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
@@ -315,6 +315,241 @@ router.get('/:id', asyncHandler(async (req, res) => {
     cashier: cashier ? { name: cashier.name, username: cashier.username } : null,
     customer,
     store,
+  });
+}));
+
+// Quantity of each product already returned (approved returns only) for an
+// invoice, so voiding restores exactly the not-yet-returned amount.
+async function returnedQuantities(invoiceId) {
+  const [allReturns, allReturnItems] = await Promise.all([
+    db.all('returns'),
+    db.all('return_items'),
+  ]);
+  const returnIds = new Set(
+    allReturns
+      .filter((r) => Number(r.invoice_id) === Number(invoiceId) && r.status !== 'rejected')
+      .map((r) => r.id)
+  );
+  const returned = new Map();
+  for (const ri of allReturnItems) {
+    if (!returnIds.has(ri.return_id)) continue;
+    returned.set(ri.product_id, (returned.get(ri.product_id) || 0) + (ri.qty || 0));
+  }
+  return returned;
+}
+
+// Void an invoice: mark it void with a reason and restore stock (minus any
+// quantity that was already returned). Leaves a permanent audit trail.
+router.post('/:id/void', requirePerm('invoice.void'), asyncHandler(async (req, res) => {
+  const reason = String((req.body && req.body.reason) || '').trim();
+  if (!reason) return res.status(400).json({ error: 'Void reason is required' });
+  const invoice = await db.get('invoices', req.params.id);
+  if (!invoice || Number(invoice.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
+  if (invoice.status === 'void') {
+    return res.status(409).json({ error: 'Invoice is already void' });
+  }
+
+  const [allItems, stockRows, returned, log, pendingReturns] = await Promise.all([
+    db.all('invoice_items'),
+    db.where('product_stock', (r) => Number(r.store_id) === Number(req.storeId)),
+    returnedQuantities(invoice.id),
+    prepareLog(
+      req.user,
+      'invoice_void',
+      `${invoice.invoice_no} voided · ₹${Number(invoice.grand_total || 0).toFixed(2)} · ${reason}`,
+      req.storeId
+    ),
+    db.all('returns'),
+  ]);
+  const items = allItems.filter((it) => Number(it.invoice_id) === Number(invoice.id));
+
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
+  const paths = {};
+  for (const it of items) {
+    const restored = Math.max(0, (it.qty || 0) - (returned.get(it.product_id) || 0));
+    if (restored <= 0) continue;
+    const cur = stockMap.get(it.product_id);
+    paths[`product_stock/${db.stockKey(it.product_id, req.storeId)}`] = {
+      product_id: it.product_id,
+      store_id: req.storeId,
+      stock_qty: (cur ? cur.stock_qty || 0 : 0) + restored,
+      reorder_level: cur ? cur.reorder_level : 0,
+    };
+  }
+  // Pending returns on a voided invoice no longer make sense: auto-reject
+  // them so they can never be approved and restore stock twice.
+  for (const r of pendingReturns) {
+    if (
+      Number(r.invoice_id) === Number(invoice.id) &&
+      r.status === 'pending'
+    ) {
+      paths[`returns/${r.id}`] = {
+        ...r,
+        status: 'rejected',
+        reject_reason: 'Invoice voided',
+        rejected_by: req.user.id,
+        rejected_at: db.now(),
+      };
+    }
+  }
+  paths[`invoices/${invoice.id}`] = {
+    ...invoice,
+    status: 'void',
+    void_reason: reason,
+    voided_by: req.user.id,
+    voided_at: db.now(),
+  };
+  paths[log.key] = log.value;
+  await db.patchMulti(paths);
+
+  res.json({ success: true, invoice_no: invoice.invoice_no });
+}));
+
+// Edit a billed invoice: items (qty/price/discount), bill discount and
+// customer. Totals are recomputed server-side and stock is reconciled against
+// the old line items. Voided invoices cannot be edited.
+router.put('/:id', requirePerm('invoice.edit'), asyncHandler(async (req, res) => {
+  const invoice = await db.get('invoices', req.params.id);
+  if (!invoice || Number(invoice.store_id) !== Number(req.storeId)) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
+  if (invoice.status === 'void') {
+    return res.status(409).json({ error: 'Voided invoices cannot be edited' });
+  }
+  const { items, discount = 0, customer_id } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'items required' });
+  }
+
+  const ids = [
+    ...new Set(items.map((it) => Number(it.product_id)).filter((id) => Number.isInteger(id) && id > 0)),
+  ];
+  if (ids.length === 0) return res.status(400).json({ error: 'Invalid items' });
+
+  const [productRows, oldItems, returned, log] = await Promise.all([
+    Promise.all(ids.map((id) => db.get('products', id))),
+    db.all('invoice_items').then((all) => all.filter((it) => Number(it.invoice_id) === Number(invoice.id))),
+    returnedQuantities(invoice.id),
+    prepareLog(
+      req.user,
+      'invoice_edited',
+      `${invoice.invoice_no} edited`,
+      req.storeId
+    ),
+  ]);
+  const productMap = new Map();
+  for (const p of productRows) {
+    if (p) productMap.set(Number(p.id), p);
+  }
+  for (const pid of ids) {
+    if (!productMap.has(pid)) return res.status(400).json({ error: 'Product not found: ' + pid });
+  }
+
+  // Build the new line items
+  const processed = [];
+  let subtotal = 0;
+  let taxTotal = 0;
+  let itemDiscTotal = 0;
+  for (const it of items) {
+    const pid = Number(it.product_id);
+    const product = productMap.get(pid);
+    const qty = Number(it.qty);
+    if (!(qty > 0)) return res.status(400).json({ error: 'Invalid quantity for ' + product.name });
+    const unitPrice = Number(it.unit_price ?? product.selling_price);
+    const lineDiscount = Math.min(Number(it.discount ?? 0), unitPrice * qty);
+    const lineTaxPct = Number(it.tax_percent ?? product.tax_percent);
+    const taxableAmt = unitPrice * qty - lineDiscount;
+    const taxAmount = taxableAmt * (lineTaxPct / 100);
+    const lineTotal = taxableAmt + taxAmount;
+    subtotal += unitPrice * qty;
+    itemDiscTotal += lineDiscount;
+    taxTotal += taxAmount;
+    processed.push({
+      product_id: pid,
+      qty,
+      unit_price: unitPrice,
+      discount: lineDiscount,
+      tax_percent: lineTaxPct,
+      tax_amount: taxAmount,
+      line_total: lineTotal,
+      cost_price: product.cost_price || 0,
+    });
+  }
+  const grandTotal =
+    Math.round((subtotal - itemDiscTotal - Number(discount) + taxTotal) * 100) / 100;
+
+  // Stock reconciliation: current stock minus old sold quantity, plus the
+  // newly sold quantity (items already returned stay restored, they were
+  // taken back into stock at approval time).
+  const oldQty = new Map();
+  const oldItemIds = new Set();
+  for (const it of oldItems) {
+    oldQty.set(it.product_id, (oldQty.get(it.product_id) || 0) + (it.qty || 0));
+    oldItemIds.add(it.id);
+  }
+  const newQty = new Map();
+  for (const p of processed) newQty.set(p.product_id, (newQty.get(p.product_id) || 0) + p.qty);
+
+  const stockRows = await db.where('product_stock', (r) => Number(r.store_id) === Number(req.storeId));
+  const stockMap = new Map(stockRows.map((r) => [Number(r.product_id), r]));
+  const allProductIds = new Set([...oldQty.keys(), ...newQty.keys()]);
+  for (const pid of allProductIds) {
+    const cur = stockMap.get(pid);
+    const base = cur ? cur.stock_qty || 0 : 0;
+    const newStock = base + (oldQty.get(pid) || 0) - (newQty.get(pid) || 0);
+    if (newStock < 0) {
+      const p = productMap.get(pid);
+      return res.status(400).json({
+        error: `Not enough stock for ${p ? p.name : 'item'} after this edit`,
+      });
+    }
+  }
+
+  // Build one atomic multi-path write: new items, removed old items, stock,
+  // invoice fields, audit log.
+  const paths = {};
+  oldItems.forEach((it, i) => {
+    paths[`invoice_items/${it.id}`] = null;
+  });
+  processed.forEach((p, i) => {
+    paths[`invoice_items/${invoice.id}_${i + 1}`] = {
+      id: `${invoice.id}_${i + 1}`,
+      invoice_id: invoice.id,
+      ...p,
+    };
+  });
+  for (const pid of allProductIds) {
+    const cur = stockMap.get(pid);
+    paths[`product_stock/${db.stockKey(pid, req.storeId)}`] = {
+      product_id: pid,
+      store_id: req.storeId,
+      stock_qty: (cur ? cur.stock_qty || 0 : 0) + (oldQty.get(pid) || 0) - (newQty.get(pid) || 0),
+      reorder_level: cur ? cur.reorder_level : 0,
+    };
+  }
+  paths[`invoices/${invoice.id}`] = {
+    ...invoice,
+    subtotal,
+    discount: Number(discount),
+    item_discount: itemDiscTotal,
+    tax_total: taxTotal,
+    grand_total: grandTotal,
+    customer_id: customer_id !== undefined ? (customer_id ? Number(customer_id) : null) : invoice.customer_id,
+    edited_by: req.user.id,
+    edited_at: db.now(),
+  };
+  paths[log.key] = log.value;
+  await db.patchMulti(paths);
+
+  res.json({
+    success: true,
+    invoice: {
+      ...paths[`invoices/${invoice.id}`],
+      id: invoice.id,
+      invoice_no: invoice.invoice_no,
+    },
   });
 }));
 

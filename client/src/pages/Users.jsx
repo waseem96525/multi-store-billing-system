@@ -102,6 +102,7 @@ export default function Users() {
           >
             <option value="cashier">Cashier</option>
             <option value="inventory">Inventory Manager</option>
+            <option value="manager">Store Manager</option>
             <option value="admin">Admin</option>
           </select>
           <select

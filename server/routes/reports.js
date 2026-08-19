@@ -1,12 +1,12 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
-router.use(authenticate, attachStore);
+router.use(authenticate, attachStore, requirePerm('reports.view'));
 
 const inRange = (dateStr, from, to) => {
   const d = db.dateOf(dateStr);

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity, prepareLog } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
@@ -47,7 +47,7 @@ router.get('/suggestions', asyncHandler(async (req, res) => {
   res.json({ suggestions, count: suggestions.length, total_est_cost });
 }));
 
-router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/', requirePerm('purchases.create'), asyncHandler(async (req, res) => {
   const { supplier_id, invoice_ref, items } = req.body || {};
   if (!supplier_id) return res.status(400).json({ error: 'supplier_id required' });
   if (!Array.isArray(items) || items.length === 0) {

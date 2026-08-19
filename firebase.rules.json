@@ -61,6 +61,9 @@
     },
     "held_bills": {
       ".indexOn": ["store_id"]
+    },
+    "cash_sessions": {
+      ".indexOn": ["store_id", "opened_at"]
     }
   }
 }

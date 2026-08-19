@@ -16,6 +16,7 @@ import Returns from './pages/Returns';
 import Settings from './pages/Settings';
 import Stores from './pages/Stores';
 import Transfers from './pages/Transfers';
+import CashDrawer from './pages/CashDrawer';
 
 export default function App() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/expenses" element={<Expenses />} />
           <Route path="/returns" element={<Returns />} />
           <Route path="/transfers" element={<Transfers />} />
+          <Route path="/cashdrawer" element={<CashDrawer />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/stores" element={<Stores />} />
         </Route>

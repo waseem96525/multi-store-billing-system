@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity, prepareLog } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
@@ -10,7 +10,7 @@ const router = express.Router();
 router.use(authenticate, attachStore);
 
 // Record a manual stock adjustment (correction, damage, return, etc.)
-router.post('/adjust', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/adjust', requirePerm('stock.adjust'), asyncHandler(async (req, res) => {
   const { product_id, change_qty, reason } = req.body || {};
   if (!product_id) return res.status(400).json({ error: 'product_id required' });
   const change = Number(change_qty);

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { logActivity, prepareLog } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
@@ -98,7 +98,7 @@ router.get('/frequent', asyncHandler(async (req, res) => {
   res.json({ products: joined });
 }));
 
-router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const {
     name,
     sku,
@@ -171,7 +171,7 @@ router.post('/', authorize('admin', 'inventory'), asyncHandler(async (req, res) 
   res.status(201).json({ product: rows[0] });
 }));
 
-router.put('/:id', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.put('/:id', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const id = req.params.id;
   const existing = await db.get('products', id);
   if (!existing) return res.status(404).json({ error: 'Product not found' });
@@ -231,7 +231,7 @@ router.put('/:id', authorize('admin', 'inventory'), asyncHandler(async (req, res
   res.json({ product: rows[0] });
 }));
 
-router.delete('/:id', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.delete('/:id', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const product = await db.get('products', req.params.id);
   if (!product) return res.status(404).json({ error: 'Product not found' });
   const stockRows = await db.where('product_stock', (r) => Number(r.product_id) === Number(req.params.id));
@@ -247,7 +247,7 @@ router.get('/categories/all', asyncHandler(async (req, res) => {
   res.json({ categories });
 }));
 
-router.post('/categories', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/categories', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   const existing = await db.where('categories', (c) => c.name.toLowerCase() === name.toLowerCase());
@@ -257,7 +257,7 @@ router.post('/categories', authorize('admin', 'inventory'), asyncHandler(async (
   res.status(201).json({ category });
 }));
 
-router.put('/categories/:id', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.put('/categories/:id', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   const existing = await db.get('categories', req.params.id);
@@ -267,7 +267,7 @@ router.put('/categories/:id', authorize('admin', 'inventory'), asyncHandler(asyn
   res.json({ category: updated });
 }));
 
-router.delete('/categories/:id', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.delete('/categories/:id', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const existing = await db.get('categories', req.params.id);
   if (!existing) return res.status(404).json({ error: 'Category not found' });
   const products = await db.where('products', (p) => Number(p.category_id) === Number(req.params.id));

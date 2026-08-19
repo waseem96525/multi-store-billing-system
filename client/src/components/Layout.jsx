@@ -11,6 +11,7 @@ import TickerBar from './TickerBar';
 import OfflineBanner from './OfflineBanner';
 import { refreshCatalog } from '../offline/offlineStore';
 import { startRealtime } from '../realtime/realtime';
+import { can, PERM } from '../utils/permissions';
 
 export default function Layout() {
   const dispatch = useDispatch();
@@ -105,21 +106,27 @@ export default function Layout() {
       <div className="p-4 font-bold text-lg border-b border-slate-700">Retail POS</div>
       {storeSwitcher}
       <nav className="flex-1 space-y-1 px-2 py-3 overflow-auto">
-        {user?.role === 'admin' && (
+        {can(user, PERM.DASHBOARD) && (
           <NavLink to="/dashboard" className={navClass} onClick={() => setMenuOpen(false)}>
             Dashboard
           </NavLink>
         )}
-        <NavLink to="/pos" className={navClass} onClick={() => setMenuOpen(false)}>
-          Point of Sale
-        </NavLink>
-        <NavLink to="/invoices" className={navClass} onClick={() => setMenuOpen(false)}>
-          Sales / Invoices
-        </NavLink>
-        <NavLink to="/inventory" className={navClass} onClick={() => setMenuOpen(false)}>
-          Inventory
-        </NavLink>
-        {(user?.role === 'admin' || user?.role === 'inventory') && (
+        {can(user, PERM.POS) && (
+          <NavLink to="/pos" className={navClass} onClick={() => setMenuOpen(false)}>
+            Point of Sale
+          </NavLink>
+        )}
+        {can(user, PERM.INVOICE_VIEW) && (
+          <NavLink to="/invoices" className={navClass} onClick={() => setMenuOpen(false)}>
+            Sales / Invoices
+          </NavLink>
+        )}
+        {can(user, PERM.INVENTORY_VIEW) && (
+          <NavLink to="/inventory" className={navClass} onClick={() => setMenuOpen(false)}>
+            Inventory
+          </NavLink>
+        )}
+        {(can(user, PERM.PURCHASES_CREATE) || can(user, PERM.INVENTORY_EDIT)) && (
           <>
             <NavLink to="/purchases" className={navClass} onClick={() => setMenuOpen(false)}>
               Purchases
@@ -130,22 +137,35 @@ export default function Layout() {
             <NavLink to="/transfers" className={navClass} onClick={() => setMenuOpen(false)}>
               Stock Transfers
             </NavLink>
-            <NavLink to="/returns" className={navClass} onClick={() => setMenuOpen(false)}>
-              Returns / Refunds
-            </NavLink>
-            <NavLink to="/expenses" className={navClass} onClick={() => setMenuOpen(false)}>
-              Expenses
-            </NavLink>
           </>
+        )}
+        {can(user, PERM.RETURNS_CREATE) && (
+          <NavLink to="/returns" className={navClass} onClick={() => setMenuOpen(false)}>
+            Returns / Refunds
+          </NavLink>
+        )}
+        {can(user, PERM.EXPENSES_CREATE) && (
+          <NavLink to="/expenses" className={navClass} onClick={() => setMenuOpen(false)}>
+            Expenses
+          </NavLink>
+        )}
+        {(can(user, PERM.CASH_OPEN) || can(user, PERM.CASH_VIEW)) && (
+          <NavLink to="/cashdrawer" className={navClass} onClick={() => setMenuOpen(false)}>
+            Cash Drawer
+          </NavLink>
+        )}
+        {can(user, PERM.REPORTS_VIEW) && (
+          <NavLink to="/reports" className={navClass} onClick={() => setMenuOpen(false)}>
+            Reports & Charts
+          </NavLink>
+        )}
+        {can(user, PERM.ACTIVITY_VIEW) && (
+          <NavLink to="/activity" className={navClass} onClick={() => setMenuOpen(false)}>
+            Activity Log
+          </NavLink>
         )}
         {user?.role === 'admin' && (
           <>
-            <NavLink to="/reports" className={navClass} onClick={() => setMenuOpen(false)}>
-              Reports & Charts
-            </NavLink>
-            <NavLink to="/activity" className={navClass} onClick={() => setMenuOpen(false)}>
-              Activity Log
-            </NavLink>
             <NavLink to="/settings" className={navClass} onClick={() => setMenuOpen(false)}>
               Shop Settings
             </NavLink>

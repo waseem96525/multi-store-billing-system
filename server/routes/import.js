@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requirePerm } = require('../middleware/auth');
 const { attachStore } = require('../middleware/store');
 const { prepareLog } = require('../utils/activity');
 const asyncHandler = require('../utils/asyncHandler');
@@ -53,7 +53,7 @@ const MAX_ROWS = 5000;
 // products by barcode, then SKU, then name. Matches are updated; unknown
 // products are created. Stock changes are recorded as stock adjustments.
 // All writes for the whole batch are committed in ONE multi-path update.
-router.post('/products', authorize('admin', 'inventory'), asyncHandler(async (req, res) => {
+router.post('/products', requirePerm('inventory.edit'), asyncHandler(async (req, res) => {
   const { rows } = req.body || {};
   const mode = (req.body || {}).stock_mode === 'set' ? 'set' : 'add';
   if (!Array.isArray(rows) || rows.length === 0) {
