@@ -830,19 +830,19 @@ export default function POS() {
         )}
 
         <div className="flex-1 overflow-auto table-wrap">
-          {results.length === 0 ? (
-            <div className="text-slate-400 text-sm">
-              Type to search products, or use Scan to read a barcode / QR code…
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {results.map((p) => (
-                  <tr
-                    key={p.id}
-                    onClick={() => handleAdd(p)}
-                    className="result-row border-b cursor-pointer hover:bg-emerald-50 transition"
-                  >
+  {results.length === 0 ? (
+    <div className="text-slate-400 text-sm">
+      Type to search products, or use Scan to read a barcode / QR code…
+    </div>
+  ) : (
+    <table className="w-full text-sm">
+      <tbody>
+        {results.map((p, index) => (
+          <tr
+            key={p.id ?? `result-${index}`}
+            onClick={() => handleAdd(p)}
+            className="result-row border-b cursor-pointer hover:bg-emerald-50 transition"
+          >
                     <td className="py-2">
                       <div className="font-medium">{p.name}</div>
                       <div className="text-xs text-slate-400">

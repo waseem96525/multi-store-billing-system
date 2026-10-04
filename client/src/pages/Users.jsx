@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { listUsers, register, setUserActive } from '../api/auth';
+import { useSelector } from 'react-redux';
+import { listUsers, register, setUserActive, deleteUser } from '../api/auth';
 import { listStores } from '../api/stores';
 
 const EMPTY = { name: '', username: '', email: '', password: '', role: 'cashier', store_id: '' };
@@ -10,6 +11,7 @@ export default function Users() {
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const me = useSelector((s) => s.auth.user);
 
   const load = async () => {
     try {
@@ -45,6 +47,17 @@ export default function Users() {
       load();
     } catch (e) {
       setError(e.response?.data?.error || 'Failed');
+    }
+  };
+
+  const handleDelete = async (u) => {
+    if (!window.confirm(`Delete staff "${u.name}"? This cannot be undone.`)) return;
+    try {
+      await deleteUser(u.id);
+      setMsg('Staff deleted');
+      load();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to delete');
     }
   };
 
@@ -159,6 +172,11 @@ export default function Users() {
                   <button className="text-blue-600" onClick={() => toggleActive(u)}>
                     {u.active ? 'Deactivate' : 'Activate'}
                   </button>
+                  {u.id !== me?.id && (
+                    <button className="text-red-600 ml-3" onClick={() => handleDelete(u)}>
+                      Delete
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

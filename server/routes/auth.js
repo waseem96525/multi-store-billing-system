@@ -146,4 +146,15 @@ router.patch('/users/:id', authenticate, authorize('admin'), asyncHandler(async 
   res.json({ success: true });
 }));
 
+router.delete('/users/:id', authenticate, authorize('admin'), asyncHandler(async (req, res) => {
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own account' });
+  }
+  const existing = await db.get('users', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'User not found' });
+  await db.remove('users', req.params.id);
+  logActivity(req.user, 'user_deleted', `Deleted user "${existing.name}" (${existing.role})`, req.storeId);
+  res.json({ success: true });
+}));
+
 module.exports = router;

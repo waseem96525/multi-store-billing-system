@@ -6,3 +6,4 @@ export const register = (data) => api.post('/auth/register', data).then((r) => r
 export const listUsers = () => api.get('/auth/users').then((r) => r.data);
 export const setUserActive = (id, body) =>
   api.patch(`/auth/users/${id}`, body).then((r) => r.data);
+export const deleteUser = (id) => api.delete(`/auth/users/${id}`).then((r) => r.data);
