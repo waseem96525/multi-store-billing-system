@@ -17,6 +17,7 @@ import Settings from './pages/Settings';
 import Stores from './pages/Stores';
 import Transfers from './pages/Transfers';
 import CashDrawer from './pages/CashDrawer';
+import BarcodeLabels from './pages/BarcodeLabels';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/pos" element={<POS />} />
           <Route path="/invoices" element={<Invoices />} />
           <Route path="/inventory" element={<Inventory />} />
+          <Route path="/barcode-labels" element={<BarcodeLabels />} />
           <Route path="/purchases" element={<Purchases />} />
           <Route path="/stock" element={<Stock />} />
           <Route path="/users" element={<Users />} />

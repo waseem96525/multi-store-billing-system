@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
   listProducts,
   createProduct,
@@ -11,7 +12,6 @@ import {
 } from '../api/products';
 import { printLabels } from '../utils/print';
 import {
-  subscribe as subscribePrinter,
   isConnected as printerConnected,
   getConfig as getPrinterConfig,
   printLabels as printSerialLabels,
@@ -58,11 +58,6 @@ export default function Inventory() {
   const [showCategories, setShowCategories] = useState(false);
   const [catName, setCatName] = useState('');
   const [catError, setCatError] = useState('');
-  const [showLabels, setShowLabels] = useState(false);
-  const [labelSel, setLabelSel] = useState({});
-  const [labelCopies, setLabelCopies] = useState(1);
-  const [labelSize, setLabelSize] = useState('58x27');
-  const [showLabelCode, setShowLabelCode] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
   const [importMode, setImportMode] = useState('add');
@@ -77,11 +72,8 @@ export default function Inventory() {
   const [comboBusy, setComboBusy] = useState(false);
   const [comboError, setComboError] = useState('');
 
-  const [printerOn, setPrinterOn] = useState(false);
-  const [printerAuto, setPrinterAuto] = useState(() => getPrinterConfig().autoUse);
+  const [printerAuto] = useState(() => getPrinterConfig().autoUse);
   const [printMsg, setPrintMsg] = useState('');
-
-  useEffect(() => subscribePrinter((s) => setPrinterOn(s.connected)), []);
 
   const formRef = useRef(null);
 
@@ -381,25 +373,6 @@ export default function Inventory() {
     }
   };
 
-  const openLabels = () => {
-    setLabelSel(Object.fromEntries(products.map((p) => [p.id, true])));
-    setLabelCopies(1);
-    setShowLabels(true);
-  };
-
-  const handlePrintLabels = () => {
-    const sel = products.filter((p) => labelSel[p.id]);
-    const code = (p) => p.barcode || p.sku || String(p.id);
-    const items = sel.map((p) => ({
-      name: p.name,
-      price: 'Rs ' + Number(p.selling_price || 0).toFixed(2),
-      code: code(p) || String(p.id),
-      copies: Number(labelCopies) || 1,
-    }));
-    if (items.length === 0) return;
-    printLabels(items, { size: labelSize, showCode: showLabelCode });
-  };
-
   const toLabelItems = (list) =>
     list.map((p) => ({
       name: p.name,
@@ -424,14 +397,11 @@ export default function Inventory() {
     }
   };
 
+  // Quick single-label print from a product row. Bulk/format printing lives on
+  // the dedicated /barcode-labels page.
   const handlePrintOne = (p) => {
     if (printerAuto && printerConnected()) handlePrintSerial([p]);
-    else printLabels(toLabelItems([p]), { size: labelSize, showCode: showLabelCode });
-  };
-
-  const handlePrintLabelsSerial = () => {
-    const sel = products.filter((p) => labelSel[p.id]);
-    handlePrintSerial(sel);
+    else printLabels(toLabelItems([p]));
   };
 
   const openImport = () => {
@@ -494,12 +464,13 @@ export default function Inventory() {
               Combos
             </button>
           )}
-          <button
+          <Link
+            to="/barcode-labels"
             className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
-            onClick={openLabels}
+            title="Open the dedicated barcode label printing page"
           >
             Print Labels
-          </button>
+          </Link>
           <button
             className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
             onClick={() => exportCsv('products').catch((e) => setError(e.response?.data?.error || 'Export failed'))}
@@ -528,6 +499,11 @@ export default function Inventory() {
       </div>
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
+      {printMsg && (
+        <div className={printMsg.includes('Sent') ? 'text-green-600 text-sm' : 'text-red-600 text-sm'}>
+          {printMsg}
+        </div>
+      )}
 
       <div className="flex gap-3 items-center">
         <input
@@ -1075,113 +1051,6 @@ export default function Inventory() {
             >
               Close
             </button>
-          </div>
-        </div>
-      )}
-
-      {showLabels && (        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white p-5 rounded-lg w-[min(92vw,26rem)] max-h-[90vh] overflow-auto space-y-3">
-            <h2 className="font-bold text-lg">Print Barcode Labels</h2>
-            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
-              <label className="flex items-center gap-2">
-                Copies per label
-                <input
-                  type="number"
-                  min={1}
-                  max={99}
-                  className="w-16 border rounded px-2 py-1"
-                  value={labelCopies}
-                  onChange={(e) => setLabelCopies(Math.max(1, Number(e.target.value) || 1))}
-                />
-              </label>
-              <label className="flex items-center gap-2">
-                Label size
-                <select
-                  className="border rounded px-2 py-1"
-                  value={labelSize}
-                  onChange={(e) => setLabelSize(e.target.value)}
-                >
-                  <option value="58x27">58 x 27 mm (thermal)</option>
-                  <option value="40x25">40 x 25 mm</option>
-                  <option value="60x40">60 x 40 mm</option>
-                  <option value="100x50">100 x 50 mm</option>
-                </select>
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={showLabelCode}
-                  onChange={(e) => setShowLabelCode(e.target.checked)}
-                />
-                Show code text
-              </label>
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <button
-                className="text-blue-600"
-                onClick={() => setLabelSel(Object.fromEntries(products.map((p) => [p.id, true])))}
-              >
-                Select all
-              </button>
-              <button
-                className="text-slate-500"
-                onClick={() => setLabelSel({})}
-              >
-                Clear
-              </button>
-            </div>
-            <div className="space-y-1 max-h-64 overflow-auto">
-              {products.map((p) => (
-                <label key={p.id} className="flex items-center gap-2 border rounded px-3 py-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={!!labelSel[p.id]}
-                    onChange={(e) =>
-                      setLabelSel((s) => ({ ...s, [p.id]: e.target.checked }))
-                    }
-                  />
-                  <span className="flex-1">
-                    {p.name}
-                    <span className="text-xs text-slate-400 ml-1">
-                      {p.barcode || p.sku || `#${p.id}`}
-                    </span>
-                  </span>
-                  <span className="font-semibold">Rs {p.selling_price}</span>
-                </label>
-              ))}
-              {products.length === 0 && (
-                <div className="text-center text-slate-400 text-sm py-4">
-                  No products in inventory
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <button
-                className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700"
-                onClick={handlePrintLabels}
-                disabled={products.filter((p) => labelSel[p.id]).length === 0}
-              >
-                Print (browser)
-              </button>
-              <button
-                className="flex-1 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-                onClick={handlePrintLabelsSerial}
-                disabled={!printerOn || products.filter((p) => labelSel[p.id]).length === 0}
-              >
-                Print to USB printer
-              </button>
-              <button
-                className="px-4 border py-2 rounded"
-                onClick={() => setShowLabels(false)}
-              >
-                Cancel
-              </button>
-            </div>
-            {printMsg && (
-              <div className={printerOn || printMsg.includes('Sent') ? 'text-green-600 text-sm' : 'text-red-600 text-sm'}>
-                {printMsg}
-              </div>
-            )}
           </div>
         </div>
       )}

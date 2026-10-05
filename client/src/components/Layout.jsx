@@ -126,6 +126,11 @@ export default function Layout() {
             Inventory
           </NavLink>
         )}
+        {can(user, PERM.INVENTORY_VIEW) && (
+          <NavLink to="/barcode-labels" className={navClass} onClick={() => setMenuOpen(false)}>
+            Barcode Labels
+          </NavLink>
+        )}
         {(can(user, PERM.PURCHASES_CREATE) || can(user, PERM.INVENTORY_EDIT)) && (
           <>
             <NavLink to="/purchases" className={navClass} onClick={() => setMenuOpen(false)}>
