@@ -203,18 +203,14 @@ button:focus-visible { outline: 2px solid #34d399; outline-offset: 2px; }
 }
 .pulse-cta { animation: softPulse 2s ease-in-out infinite; }
 
-/* Running shop-name ticker */
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
+/* Static shop-name banner (animation disabled) */
 .ticker-track {
   display: inline-flex;
   white-space: nowrap;
-  will-change: transform;
-  animation: marquee 24s linear infinite;
+  will-change: auto;
+  animation: none;
 }
-.ticker-track:hover { animation-play-state: paused; }
+.ticker-track:hover { animation-play-state: running; }
 .ticker-fade {
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
   mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
