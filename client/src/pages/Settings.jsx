@@ -23,6 +23,8 @@ export default function Settings() {
     gstin: '',
     receipt_footer: '',
     background: '',
+    upi_vpa: '',
+    upi_name: '',
   });
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
@@ -82,6 +84,8 @@ export default function Settings() {
           gstin: store.gstin || '',
           receipt_footer: store.receipt_footer || '',
           background: store.background || '',
+          upi_vpa: store.upi_vpa || '',
+          upi_name: store.upi_name || '',
         });
         setBgPreview(store.background || '');
         dispatch(setCurrentStoreInfo(store));
@@ -148,6 +152,24 @@ export default function Settings() {
             className={field}
             value={form.gstin}
             onChange={(e) => setForm({ ...form, gstin: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className={label}>UPI ID / VPA (for UPI QR payments)</label>
+          <input
+            className={field}
+            placeholder="shopname@okhdfc / shopname@ybl"
+            value={form.upi_vpa}
+            onChange={(e) => setForm({ ...form, upi_vpa: e.target.value })}
+          />
+        </div>
+        <div>
+          <label className={label}>UPI Name (shown in customer's UPI app)</label>
+          <input
+            className={field}
+            placeholder={form.name}
+            value={form.upi_name}
+            onChange={(e) => setForm({ ...form, upi_name: e.target.value })}
           />
         </div>
         <div>

@@ -19,7 +19,7 @@ import { catalogKey } from '../offline/offlineStore';
 // refresh the moment a sale/purchase happens on any device without the
 // browser keeping a copy of that data.
 const STREAM_PATHS = ['products', 'product_stock', 'customers', 'stores'];
-const SIGNAL_PATHS = ['invoices', 'suppliers'];
+const SIGNAL_PATHS = ['invoices', 'suppliers', 'cash_sessions'];
 const ALL_STREAM_PATHS = [...STREAM_PATHS, ...SIGNAL_PATHS];
 
 const live = {

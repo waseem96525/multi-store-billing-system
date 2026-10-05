@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
+import QRCode from 'qrcode';
 import CountUp from '../components/CountUp';
 import SuccessCheck from '../components/SuccessCheck';
 import { listProducts, getProductByBarcode, listFrequentProducts } from '../api/products';
+import { listCombos } from '../api/combos';
+import { getCurrentSession } from '../api/cash';
 import { listCustomers, createCustomer } from '../api/customers';
 import {
   createInvoice,
@@ -93,6 +97,14 @@ export default function POS() {
   const [recentSales, setRecentSales] = useState([]);
   const [showNewCustomer, setShowNewCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', email: '' });
+  const [combos, setCombos] = useState([]);
+  const [shift, setShift] = useState(null);
+  const [showUpiQr, setShowUpiQr] = useState(false);
+  const [upiQr, setUpiQr] = useState('');
+  const [upiBusy, setUpiBusy] = useState(false);
+
+  const currentStoreInfo = useSelector((s) => s.store.currentStore);
+  const navigate = useNavigate();
 
   const searchRef = useRef(null);
   const videoRef = useRef(null);
@@ -215,7 +227,16 @@ export default function POS() {
     loadHeld();
     loadCustomers();
     loadRecent();
+    // Load active combos (bundle pricing) and the current cash shift.
+    listCombos().then((d) => setCombos(d.combos || [])).catch(() => {});
+    getCurrentSession().then((d) => setShift(d.session)).catch(() => {});
   }, [loadFrequent, loadHeld, loadCustomers, loadRecent]);
+
+  // Refresh the shift banner whenever the live catalog signals a change
+  // (covers drawer open/close happening on another device).
+  useEffect(() => {
+    getCurrentSession().then((d) => setShift(d.session)).catch(() => {});
+  }, [liveVersion]);
 
   // Live sync: keep the customer dropdown and quick-shelf prices/stock fresh
   // when other devices change them.
@@ -491,6 +512,89 @@ export default function POS() {
   const splitCashNeed = Math.max(0, round2(grand - ((parseFloat(splitPay.card) || 0) + (parseFloat(splitPay.upi) || 0))));
   const splitChange = Math.max(0, round2((parseFloat(splitPay.cash) || 0) - splitCashNeed));
   const splitModes = ['cash', 'card', 'upi'].filter((k) => (parseFloat(splitPay[k]) || 0) > 0);
+
+  // Add a whole combo to the cart at the bundle price: each item is added at
+  // full price, then the difference between the natural total and the combo
+  // price is allocated as absolute item discounts (pro-rata), so taxes and
+  // invoicing behave exactly like a normal sale.
+  const handleAddCombo = (combo) => {
+    const items = (combo.items || []).filter((it) => it.exists);
+    if (!items.length) {
+      addToast('Combo has no valid products', 'error');
+      return;
+    }
+    const natural = items.reduce(
+      (s, it) => s + (Number(it.selling_price) || 0) * (Number(it.qty) || 1),
+      0
+    );
+    const totalDiscount = Math.max(0, natural - (Number(combo.price) || 0));
+    items.forEach((it) => {
+      dispatch(
+        addItemQty({
+          product: {
+            id: it.product_id,
+            name: it.name,
+            unit: it.unit,
+            selling_price: Number(it.selling_price) || 0,
+            tax_percent: Number(it.tax_percent) || 0,
+            discount_pct: 0,
+            stock_qty: it.stock_qty,
+          },
+          qty: it.qty,
+        })
+      );
+    });
+    let allocated = 0;
+    items.forEach((it, idx) => {
+      const line = (Number(it.selling_price) || 0) * (Number(it.qty) || 1);
+      let disc =
+        natural > 0
+          ? round2(totalDiscount * (line / natural))
+          : 0;
+      if (idx === items.length - 1) disc = Math.max(0, round2(totalDiscount - allocated));
+      allocated = round2(allocated + disc);
+      dispatch(updateItemDiscount({ product_id: it.product_id, discount: disc }));
+    });
+    addToast(`Combo added: ${combo.name}`);
+  };
+
+  // Build a UPI intent deep link for the current bill total and render it as
+  // a QR code. Works with any UPI app (GPay/PhonePe/Paytm/phone-bank) as long
+  // as a UPI ID is set on the store in Shop Settings.
+  const openUpiQr = async () => {
+    const vpa = currentStoreInfo?.upi_vpa;
+    if (!vpa) {
+      addToast('Set a UPI ID in Shop Settings first', 'error');
+      return;
+    }
+    if (grand <= 0) {
+      addToast('Bill total is zero', 'error');
+      return;
+    }
+    setUpiBusy(true);
+    try {
+      const name = currentStoreInfo?.upi_name || currentStoreInfo?.name || 'Store';
+      const params = new URLSearchParams({
+        pa: vpa,
+        pn: name,
+        am: grand.toFixed(2),
+        cu: 'INR',
+        tn: currentStoreInfo?.name || '',
+      });
+      const url = `upi://pay?${params.toString()}`;
+      const dataUrl = await QRCode.toDataURL(url, {
+        width: 512,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+      });
+      setUpiQr(dataUrl);
+      setShowUpiQr(true);
+    } catch (e) {
+      addToast('Could not generate UPI QR', 'error');
+    } finally {
+      setUpiBusy(false);
+    }
+  };
 
   const handleHold = async () => {
     if (cart.items.length === 0) {
@@ -771,6 +875,20 @@ export default function POS() {
             <DrawerWidget />
             <button
               type="button"
+              onClick={() => navigate('/cashdrawer')}
+              className={`text-xs px-3 py-1.5 rounded-full transition ${
+                shift
+                  ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              }`}
+              title="Shift / cash drawer"
+            >
+              {shift
+                ? `Shift · ${shift.opened_by_name || ''} · since ${new Date(shift.opened_at).toLocaleTimeString()}`
+                : 'No shift open'}
+            </button>
+            <button
+              type="button"
               onClick={handleHold}
               className="text-xs px-3 py-1.5 rounded-full bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
               title="Park current bill (F3)"
@@ -806,6 +924,29 @@ export default function POS() {
             📷 Scan
           </button>
         </div>
+
+        {/* Combos (bundle pricing) */}
+        {combos.length > 0 && (
+          <div className="mb-3">
+            <div className="text-xs font-semibold text-violet-600 mb-1">
+              Combos — tap to add the whole bundle
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {combos.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => handleAddCombo(c)}
+                  className="px-3 py-1.5 rounded-full border border-violet-200 bg-violet-50 hover:bg-violet-100 text-sm transition"
+                  title={c.items.map((i) => `${i.qty}× ${i.name}`).join(', ')}
+                >
+                  <span className="font-medium">🎁 {c.name}</span>{' '}
+                  <span className="text-violet-600">₹{Number(c.price).toFixed(2)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Quick-add shelf */}
         {frequent.length > 0 && (
@@ -1214,6 +1355,20 @@ export default function POS() {
             <option value="upi">UPI / Other</option>
           </select>
 
+          {/* UPI QR — collect via any UPI app when a UPI ID is set on the store */}
+          {currentStoreInfo?.upi_vpa && cart.items.length > 0 && !creditSale && (
+            <button
+              type="button"
+              disabled={upiBusy}
+              onClick={openUpiQr}
+              className="w-full mt-1 py-1.5 rounded bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition"
+            >
+              {upiBusy
+                ? 'Generating…'
+                : `UPI QR — collect ₹${grand.toFixed(2)}`}
+            </button>
+          )}
+
           {/* Split payment */}
           {!creditSale && cart.items.length > 0 && (
             <div className="rounded bg-slate-50 p-2 mt-1">
@@ -1460,6 +1615,35 @@ export default function POS() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* UPI QR collection */}
+      {showUpiQr && upiQr && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
+          <div className="bg-white p-5 rounded-lg w-[min(92vw,20rem)] text-center space-y-2">
+            <h2 className="font-bold text-lg text-slate-800">Collect via UPI</h2>
+            <div className="text-3xl font-bold text-slate-900">₹{grand.toFixed(2)}</div>
+            <img src={upiQr} alt="UPI payment QR code" className="mx-auto w-56 h-56" />
+            <div className="text-xs text-slate-500">
+              Scan with any UPI app (GPay / PhonePe / Paytm) —{' '}
+              {currentStoreInfo?.upi_name || currentStoreInfo?.name || 'store'}
+            </div>
+            <div className="text-xs text-slate-400 break-all">
+              {currentStoreInfo?.upi_vpa}
+            </div>
+            <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
+              After the customer pays, tap <b>Charge &amp; Print</b> to complete
+              the sale.
+            </div>
+            <button
+              type="button"
+              className="w-full bg-slate-800 text-white py-2 rounded hover:bg-slate-700"
+              onClick={() => setShowUpiQr(false)}
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
 

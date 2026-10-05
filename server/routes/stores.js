@@ -24,7 +24,7 @@ router.get('/current', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', authorize('admin'), asyncHandler(async (req, res) => {
-  const { name, address, phone, gstin, receipt_footer, background } = req.body || {};
+  const { name, address, phone, gstin, receipt_footer, background, upi_vpa, upi_name } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   const [store, products] = await Promise.all([
     db.insert('stores', {
@@ -34,6 +34,8 @@ router.post('/', authorize('admin'), asyncHandler(async (req, res) => {
       gstin: gstin || null,
       receipt_footer: receipt_footer || null,
       background: background || null,
+      upi_vpa: upi_vpa || null,
+      upi_name: upi_name || null,
       created_at: db.now(),
     }),
     db.all('products'),
@@ -55,7 +57,7 @@ router.post('/', authorize('admin'), asyncHandler(async (req, res) => {
 
 // Update settings for the current store (admin only)
 router.put('/current', authorize('admin'), asyncHandler(async (req, res) => {
-  const { name, address, phone, gstin, receipt_footer, background } = req.body || {};
+  const { name, address, phone, gstin, receipt_footer, background, upi_vpa, upi_name } = req.body || {};
   const existing = await db.get('stores', req.storeId);
   if (!existing) return res.status(404).json({ error: 'Store not found' });
   const store = await db.update('stores', req.storeId, {
@@ -65,6 +67,8 @@ router.put('/current', authorize('admin'), asyncHandler(async (req, res) => {
     gstin: gstin ?? existing.gstin,
     receipt_footer: receipt_footer ?? existing.receipt_footer,
     background: background === undefined ? existing.background : background,
+    upi_vpa: upi_vpa === undefined ? existing.upi_vpa : (upi_vpa || null),
+    upi_name: upi_name === undefined ? existing.upi_name : (upi_name || null),
   });
   logActivity(req.user, 'store_updated', `Updated settings for "${store.name}"`, req.storeId);
   res.json({ store });
@@ -72,7 +76,7 @@ router.put('/current', authorize('admin'), asyncHandler(async (req, res) => {
 
 router.put('/:id', authorize('admin'), asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const { name, address, phone, gstin, receipt_footer, background } = req.body || {};
+  const { name, address, phone, gstin, receipt_footer, background, upi_vpa, upi_name } = req.body || {};
   const existing = await db.get('stores', id);
   if (!existing) return res.status(404).json({ error: 'Store not found' });
   const store = await db.update('stores', id, {
@@ -82,6 +86,8 @@ router.put('/:id', authorize('admin'), asyncHandler(async (req, res) => {
     gstin: gstin ?? existing.gstin,
     receipt_footer: receipt_footer ?? existing.receipt_footer,
     background: background === undefined ? existing.background : background,
+    upi_vpa: upi_vpa === undefined ? existing.upi_vpa : (upi_vpa || null),
+    upi_name: upi_name === undefined ? existing.upi_name : (upi_name || null),
   });
   logActivity(req.user, 'store_updated', `Updated store "${store.name}"`, req.storeId);
   res.json({ store });

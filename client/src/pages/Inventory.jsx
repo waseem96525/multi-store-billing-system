@@ -17,6 +17,7 @@ import {
   printLabels as printSerialLabels,
 } from '../utils/serialPrinter';
 import { exportCsv } from '../api/export';
+import { listCombos, createCombo, updateCombo, deleteCombo } from '../api/combos';
 import { importProducts } from '../api/import';
 import { parseCsv, csvToObjects } from '../utils/csv';
 import useLiveCatalog from '../realtime/useLiveCatalog';
@@ -68,6 +69,13 @@ export default function Inventory() {
   const [importResult, setImportResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
+  const [showCombos, setShowCombos] = useState(false);
+  const [combos, setCombos] = useState([]);
+  const [comboForm, setComboForm] = useState(null);
+  const [comboItemPick, setComboItemPick] = useState('');
+  const [comboItemQty, setComboItemQty] = useState('1');
+  const [comboBusy, setComboBusy] = useState(false);
+  const [comboError, setComboError] = useState('');
 
   const [printerOn, setPrinterOn] = useState(false);
   const [printerAuto, setPrinterAuto] = useState(() => getPrinterConfig().autoUse);
@@ -262,6 +270,117 @@ export default function Inventory() {
     }
   };
 
+  // ---- Combos (bundle pricing) ----
+  const loadCombos = async () => {
+    try {
+      const d = await listCombos();
+      setCombos(d.combos || []);
+    } catch (e) {
+      setComboError(e.response?.data?.error || 'Failed to load combos');
+    }
+  };
+
+  const openCombos = () => {
+    setComboError('');
+    setShowCombos(true);
+    loadCombos();
+  };
+
+  const startNewCombo = () => {
+    setComboForm({ name: '', price: '', active: true, items: [] });
+    setComboItemPick('');
+    setComboItemQty('1');
+    setComboError('');
+  };
+
+  const openComboEdit = (c) => {
+    setComboForm({
+      id: c.id,
+      name: c.name,
+      price: String(c.price),
+      active: c.active !== false,
+      items: (c.items || []).map((i) => ({ product_id: i.product_id, qty: i.qty })),
+    });
+    setComboItemPick('');
+    setComboItemQty('1');
+    setComboError('');
+  };
+
+  const addComboItem = () => {
+    const pid = Number(comboItemPick);
+    const qty = Math.max(1, Math.floor(Number(comboItemQty) || 1));
+    if (!pid) return;
+    setComboForm((f) => {
+      if (!f) return f;
+      const items = [...f.items];
+      const idx = items.findIndex((i) => i.product_id === pid);
+      if (idx >= 0) items[idx] = { ...items[idx], qty: items[idx].qty + qty };
+      else items.push({ product_id: pid, qty });
+      return { ...f, items };
+    });
+    setComboItemPick('');
+    setComboItemQty('1');
+  };
+
+  const removeComboItem = (idx) => {
+    setComboForm((f) => f && { ...f, items: f.items.filter((_, i) => i !== idx) });
+  };
+
+  const saveCombo = async (e) => {
+    e.preventDefault();
+    if (!comboForm) return;
+    if (!comboForm.name.trim()) {
+      setComboError('Combo name required');
+      return;
+    }
+    if (!comboForm.items.length) {
+      setComboError('Add at least one item to the combo');
+      return;
+    }
+    setComboBusy(true);
+    setComboError('');
+    try {
+      const payload = {
+        name: comboForm.name.trim(),
+        price: Number(comboForm.price),
+        active: comboForm.active !== false,
+        items: comboForm.items,
+      };
+      if (comboForm.id) await updateCombo(comboForm.id, payload);
+      else await createCombo(payload);
+      setComboForm(null);
+      await loadCombos();
+    } catch (err) {
+      setComboError(err.response?.data?.error || 'Failed to save combo');
+    } finally {
+      setComboBusy(false);
+    }
+  };
+
+  const handleDeleteCombo = async (c) => {
+    if (!window.confirm(`Delete combo "${c.name}"?`)) return;
+    try {
+      await deleteCombo(c.id);
+      await loadCombos();
+    } catch (err) {
+      setComboError(err.response?.data?.error || 'Failed to delete combo');
+    }
+  };
+
+  const toggleComboActive = async (c) => {
+    try {
+      await updateCombo(c.id, {
+        name: c.name,
+        price: c.price,
+        active: c.active === false,
+        items: (c.items || []).map((i) => ({ product_id: i.product_id, qty: i.qty })),
+      });
+      await loadCombos();
+    } catch (err) {
+      setComboError(err.response?.data?.error || 'Failed to update combo');
+    }
+  };
+
   const openLabels = () => {
     setLabelSel(Object.fromEntries(products.map((p) => [p.id, true])));
     setLabelCopies(1);
@@ -364,6 +483,15 @@ export default function Inventory() {
               onClick={() => setShowCategories(true)}
             >
               Categories
+            </button>
+          )}
+          {canEdit && (
+            <button
+              className="bg-slate-100 text-slate-700 border px-3 py-2 rounded hover:bg-slate-200"
+              onClick={openCombos}
+              title="Bundle pricing — groups of products sold at one price"
+            >
+              Combos
             </button>
           )}
           <button
@@ -740,6 +868,210 @@ export default function Inventory() {
             <button
               className="w-full border py-2 rounded"
               onClick={() => setShowCategories(false)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCombos && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white p-5 rounded-lg w-[min(92vw,30rem)] max-h-[90vh] overflow-auto space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-lg">Combos (Bundle Pricing)</h2>
+              {canEdit && !comboForm && (
+                <button
+                  className="bg-slate-800 text-white px-3 py-1.5 rounded text-sm hover:bg-slate-700"
+                  onClick={startNewCombo}
+                >
+                  + New Combo
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              A combo is a fixed group of products sold at one price. The POS
+              shows a “Combos” shelf — tapping one adds the whole bundle at the
+              combo price (the difference is applied as item discounts, so tax
+              and stock stay correct).
+            </p>
+            {comboError && <div className="text-red-600 text-sm">{comboError}</div>}
+
+            {comboForm ? (
+              <form onSubmit={saveCombo} className="space-y-3 border rounded p-3 bg-slate-50">
+                <div className="text-sm font-semibold text-slate-700">
+                  {comboForm.id ? 'Edit combo' : 'New combo'}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-slate-600 mb-1">Combo name</label>
+                    <input
+                      className="w-full border rounded px-2 py-1"
+                      value={comboForm.name}
+                      onChange={(e) =>
+                        setComboForm({ ...comboForm, name: e.target.value })
+                      }
+                      autoFocus
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-600 mb-1">Combo price (₹)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      className="w-full border rounded px-2 py-1"
+                      value={comboForm.price}
+                      onChange={(e) =>
+                        setComboForm({ ...comboForm, price: e.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-semibold text-slate-600 mb-1">Items in combo</div>
+                  {comboForm.items.length === 0 && (
+                    <div className="text-xs text-slate-400 mb-1">No items yet — add below.</div>
+                  )}
+                  <div className="space-y-1">
+                    {comboForm.items.map((it, idx) => {
+                      const p = products.find((x) => x.id === it.product_id);
+                      return (
+                        <div
+                          key={it.product_id}
+                          className="flex items-center justify-between text-xs border rounded px-2 py-1 bg-white"
+                        >
+                          <span>
+                            {it.qty}× {p ? p.name : `#${it.product_id}`}
+                          </span>
+                          <button
+                            type="button"
+                            className="text-red-600"
+                            onClick={() => removeComboItem(idx)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <select
+                      className="flex-1 border rounded px-2 py-1 text-sm"
+                      value={comboItemPick}
+                      onChange={(e) => setComboItemPick(e.target.value)}
+                    >
+                      <option value="">— pick product —</option>
+                      {products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} (₹{p.selling_price})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      className="w-16 border rounded px-2 py-1 text-sm text-center"
+                      value={comboItemQty}
+                      onChange={(e) => setComboItemQty(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="border px-3 py-1 rounded text-sm hover:bg-slate-50"
+                      onClick={addComboItem}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={comboForm.active !== false}
+                    onChange={(e) =>
+                      setComboForm({ ...comboForm, active: e.target.checked })
+                    }
+                  />
+                  Active (shown on the POS combo shelf)
+                </label>
+
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={comboBusy}
+                    className="flex-1 bg-green-600 text-white py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {comboBusy ? 'Saving…' : 'Save Combo'}
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 border py-2 rounded"
+                    onClick={() => setComboForm(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-auto">
+                {combos.map((c) => (
+                  <div
+                    key={c.id}
+                    className="border rounded p-3 space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">
+                        {c.name}{' '}
+                        <span
+                          className={`text-xs px-1.5 py-0.5 rounded-full ${
+                            c.active !== false
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {c.active !== false ? 'Active' : 'Inactive'}
+                        </span>
+                      </span>
+                      <span className="text-slate-700 font-semibold">
+                        ₹{Number(c.price).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {c.items
+                        .map((i) => `${i.qty}× ${i.name}`)
+                        .join(' · ')}
+                    </div>
+                    {canEdit && (
+                      <div className="flex gap-3 text-xs">
+                        <button className="text-blue-600" onClick={() => openComboEdit(c)}>
+                          Edit
+                        </button>
+                        <button className="text-amber-600" onClick={() => toggleComboActive(c)}>
+                          {c.active !== false ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button className="text-red-600" onClick={() => handleDeleteCombo(c)}>
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {combos.length === 0 && (
+                  <div className="text-center text-slate-400 text-sm py-4">
+                    No combos yet
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              className="w-full border py-2 rounded"
+              onClick={() => {
+                setShowCombos(false);
+                setComboForm(null);
+              }}
             >
               Close
             </button>

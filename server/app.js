@@ -21,6 +21,7 @@ const importRoutes = require('./routes/import');
 const backupRoutes = require('./routes/backup');
 const configRoutes = require('./routes/config');
 const cashRoutes = require('./routes/cash');
+const comboRoutes = require('./routes/combos');
 
 require('./db'); // initialize database + seed admin
 
@@ -51,6 +52,7 @@ app.use('/api/import', importRoutes);
 app.use('/api/backup', backupRoutes);
 app.use('/api/config', configRoutes);
 app.use('/api/cash', cashRoutes);
+app.use('/api/combos', comboRoutes);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {

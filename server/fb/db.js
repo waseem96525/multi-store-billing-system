@@ -27,6 +27,7 @@ const T = {
   return_items: 'return_items',
   stock_transfers: 'stock_transfers',
   stock_transfer_items: 'stock_transfer_items',
+  combos: 'combos',
   activity_logs: 'activity_logs',
   cash_sessions: 'cash_sessions',
 };
